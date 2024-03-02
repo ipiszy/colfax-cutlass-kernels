@@ -85,10 +85,12 @@ CUTLASS_DEVICE static void applySoftmaxNormalizer(const Fragment0 &sPrime,
 }
 
 template <bool isFirst, typename AccumType, typename Fragment0,
-          typename Fragment1, typename Fragment2, typename Fragment3>
+          typename Fragment1, typename Fragment2, typename Fragment3,
+          typename CountingTensor, typename GAccumShape>
 CUTLASS_DEVICE static void
 onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
-                        Fragment3 &accum_o, float scaleFactor) {
+                        Fragment3 &accum_o, float scaleFactor,
+                        const CountingTensor& countingTensor, const GAccumShape& gAccumShape) {
   using namespace cute;
   using FragValType = typename Fragment2::value_type;
   using FragValTypeO = typename Fragment3::value_type;
@@ -102,6 +104,9 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
   auto MT = shape<1>(accum); // number of tiles along M.
   auto NT = shape<2>(accum); // number of tiles along N.
   MaxOp<AccumType> maxOp;
+
+  auto M = get<0>(gAccumShape);
+  auto N = get<1>(gAccumShape);
 
   auto data = accum.data();
   auto data_o = accum_o.data();
@@ -120,24 +125,45 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
 
 #pragma unroll
     for (int k = 0; k < NT * size<2>(VT); ++k) {
-      data[n] = FragValType(AccumType(data[n]) * scaleFactor);
-      max0 = cutlass::fast_max(max0, AccumType(data[n]));
+      auto coordinates = countingTensor(cute::make_tuple(0, 0, k % size<2>(VT)), MT, NT);
+      if (get<0>(coordinates) < M && get<1>(coordinates) < N) {
+        data[n] = FragValType(AccumType(data[n]) * scaleFactor);
+        // CUTE_LOG(
+        //   "i=%d, M=%d, N=%d, k=%d, shape:((%d, %d, %d), %d, %d), x: %d, y: %d, n: %d, data[n]: %f, max0: %f\n",
+        //   i, int(M), int(N), k, 0, 0, k%size<2>(VT), int(MT), int(NT), int(get<0>(coordinates)), int(get<1>(coordinates)), n, AccumType(data[n]), max0
+        // );
+        max0 = cutlass::fast_max(max0, AccumType(data[n]));
+      }
       n++;
 
-      data[n] = FragValType(AccumType(data[n]) * scaleFactor);
-      max0 = cutlass::fast_max(max0, AccumType(data[n]));
+      coordinates = countingTensor(cute::make_tuple(1, 0, k % size<2>(VT)), MT, NT);
+      if (get<0>(coordinates) < M && get<1>(coordinates) < N) {
+        data[n] = FragValType(AccumType(data[n]) * scaleFactor);
+        // CUTE_LOG(
+        //   "i=%d, M=%d, N=%d, k=%d, shape:((%d, %d, %d), %d, %d), x: %d, y: %d, n: %d, data[n]: %f, max0: %f\n",
+        //   i, int(M), int(N), k, 1, 0, k%size<2>(VT), int(MT), int(NT), int(get<0>(coordinates)), int(get<1>(coordinates)), n, AccumType(data[n]), max0
+        // );
+        max0 = cutlass::fast_max(max0, AccumType(data[n]));
+      }
       n++;
 
-      data[n] = FragValType(AccumType(data[n]) * scaleFactor);
-      max1 = cutlass::fast_max(max1, AccumType(data[n]));
+      coordinates = countingTensor(cute::make_tuple(0, 1, k % size<2>(VT)), MT, NT);
+      if (get<0>(coordinates) < M && get<1>(coordinates) < N) {
+        data[n] = FragValType(AccumType(data[n]) * scaleFactor);
+        max1 = cutlass::fast_max(max1, AccumType(data[n]));
+      }
       n++;
 
-      data[n] = FragValType(AccumType(data[n]) * scaleFactor);
-      max1 = cutlass::fast_max(max1, AccumType(data[n]));
+      coordinates = countingTensor(cute::make_tuple(1, 1, k % size<2>(VT)), MT, NT);
+      if (get<0>(coordinates) < M && get<1>(coordinates) < N) {
+        data[n] = FragValType(AccumType(data[n]) * scaleFactor);
+        max1 = cutlass::fast_max(max1, AccumType(data[n]));
+      }
       n++;
     }
     auto max_quad_0 = ShflReduce<4>::run(max0, maxOp);
     auto max_quad_1 = ShflReduce<4>::run(max1, maxOp);
+    // CUTE_LOG("i=%d, MT=%d, NT=%d, max_quad_0: %f, max_quad_1: %f\n", i, int(MT), int(NT), max_quad_0, max_quad_1);
     mi(rowId) = max_quad_0;
     mi(rowId + 1) = max_quad_1;
 
@@ -178,25 +204,41 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
 #pragma unroll
     for (int k = 0; k < NT * size<2>(VT); ++k) {
 
-      auto val0 = AccumType(data[n]);
-      val0 = exp2f(val0 - miRow0);
-      sum0 += val0;
-      data[n++] = val0;
+      auto coordinates = countingTensor(cute::make_tuple(0, 0, k % size<2>(VT)), MT, NT);
+      if (get<0>(coordinates) < M && get<1>(coordinates) < N) {
+        auto val0 = AccumType(data[n]);
+        val0 = exp2f(val0 - miRow0);
+        sum0 += val0;
+        data[n] = val0;
+      }
+      n++;
 
-      auto val1 = AccumType(data[n]);
-      val1 = exp2f(val1 - miRow0);
-      sum0 += val1;
-      data[n++] = val1;
+      coordinates = countingTensor(cute::make_tuple(1, 0, k % size<2>(VT)), MT, NT);
+      if (get<0>(coordinates) < M && get<1>(coordinates) < N) {
+        auto val1 = AccumType(data[n]);
+        val1 = exp2f(val1 - miRow0);
+        sum0 += val1;
+        data[n] = val1;
+      }
+      n++;
 
-      auto val2 = AccumType(data[n]);
-      val2 = exp2f(val2 - miRow1);
-      sum1 += val2;
-      data[n++] = val2;
+      coordinates = countingTensor(cute::make_tuple(0, 1, k % size<2>(VT)), MT, NT);
+      if (get<0>(coordinates) < M && get<1>(coordinates) < N) {
+        auto val2 = AccumType(data[n]);
+        val2 = exp2f(val2 - miRow1);
+        sum1 += val2;
+        data[n] = val2;
+      }
+      n++;
 
-      auto val3 = AccumType(data[n]);
-      val3 = exp2f(val3 - miRow1);
-      sum1 += val3;
-      data[n++] = val3;
+      coordinates = countingTensor(cute::make_tuple(1, 1, k % size<2>(VT)), MT, NT);
+      if (get<0>(coordinates) < M && get<1>(coordinates) < N) {
+        auto val3 = AccumType(data[n]);
+        val3 = exp2f(val3 - miRow1);
+        sum1 += val3;
+        data[n] = val3;
+      }
+      n++;
     }
     auto sumQuad0 = ShflReduce<4>::run(sum0, sumOp);
     auto sumQuad1 = ShflReduce<4>::run(sum1, sumOp);

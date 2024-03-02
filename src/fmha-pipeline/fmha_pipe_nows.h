@@ -180,6 +180,21 @@ fmhaForwardPipelinedNoWspl(
   cfk::copy(tQgQ(_, 0), tQsQ(_, 0), tmaLoadQ, tma_load_mbar[0]);
   cute::wait_barrier(tma_load_mbar[0], 0); // This is REQUIRED.
 
+  // if (cute::thread0()) {
+  //   CUTE_LOG("thread info: %s\n", "debug");
+  //   print("==== TMA_Q ====\n");
+  //   print(tmaLoadQ);
+  //   print("  mQ  :  "); print(  mQ);   print("\n");
+  //   print("  gQ  :  "); print(  gQ);   print("\n");
+  //   print("tQgQ_x:  "); print(tQgQX); print("\n");
+  //   print("tQgQ:  "); print(tQgQ); print("\n");
+  //   print("tQsQ_x:  "); print(tQsQX); print("\n");
+  //   print("tQsQ:  "); print(tQsQ); print("\n");
+  //   print("kTiles:  "); print(kTiles); print("\n");
+  //   print("sQ: "); print(sQ); print("\n");
+  //   print_tensor(sQ);
+  // }
+
   // Initialize matmul objects.
   TiledMma0 tiledMma0;
   TiledMma1 tiledMma1;
@@ -204,6 +219,10 @@ fmhaForwardPipelinedNoWspl(
 #ifdef QINRMEM
   Tensor tSsQ = threadMma0.partition_A(sQ);
   cfk::copy(tSsQ, tSrQ);
+  // if (cute::thread0()) {
+  //   print("tSrQ:  "); print(tSrQ); print("\n");
+  //   print_tensor(tSrQ);
+  // }
 #endif
 
   // FMHA OUTPUT (GEMM-II) accumulator.
@@ -211,7 +230,7 @@ fmhaForwardPipelinedNoWspl(
   clear(tOrO);
 
   // Allocate space for per-thread rowMax and rowSum in rmem.
-  Tensor rowMax = make_tensor<SoftType>(Shape<Int<2 * size<1>(tSrS)>>{});
+  Tensor rowMax = make_tensor<SoftType>(Shape<Int<size<0>(tSrS) * size<1>(tSrS)>>{});
   Tensor rowSum = make_fragment_like(rowMax);
   cute::fill(rowMax, -cutlass::platform::numeric_limits<SoftType>::infinity());
   cute::fill(rowSum, SoftType(0.0));
@@ -278,7 +297,7 @@ fmhaForwardPipelinedNoWspl(
     fmhaForwardConsumer(Q, K, V, S, tSrQ, tSrK(_, _, _, stage), tSrS,
                         tOrV(_, _, _, stage), tOrO, tOrPLayout, reg2reg, rowMax, rowSum,
                         tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
-                        tiledMma0, tiledMma1, AccumType(0), SoftType(0));
+                        tiledMma0, tiledMma1, AccumType(0), SoftType(0), &shared_storage.thread_count);
     ++smem_pipe_read;
   }
 
@@ -293,7 +312,7 @@ fmhaForwardPipelinedNoWspl(
     fmhaForwardConsumer(Q, K, V, S, tSrQ, tSrK(_, _, _, stage), tSrS,
                         tOrV(_, _, _, stage), tOrO, tOrPLayout, reg2reg, rowMax, rowSum,
                         tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
-                        tiledMma0, tiledMma1, AccumType(0), SoftType(0));
+                        tiledMma0, tiledMma1, AccumType(0), SoftType(0), &shared_storage.thread_count);
 
     pipeline.consumer_release(smem_pipe_release);
 

@@ -259,9 +259,9 @@ void fmhaForwardDevice(int SEQLEN, int KEYLEN, int NUMHEADS, int BATCH,
   using MmaTileShape = Layout<Shape<_1, _1, _1>>;
 #endif
 
-#if defined(QINRMEM) && EXECMODE != 2  
+#if defined(QINRMEM) && EXECMODE != 2
   // USE RS version of GMMA for GEMM-I.
-  // Disabled for non-pipelined version.  
+  // Disabled for non-pipelined version.
   using TiledMma0 = decltype(cute::make_tiled_mma(
       rs_op_selector_custom<MmaA, MmaB, MmaC, Shape<bM, bN, bK>>(),
       MmaTileShape{}));
@@ -289,7 +289,7 @@ void fmhaForwardDevice(int SEQLEN, int KEYLEN, int NUMHEADS, int BATCH,
   // col-major for MI and S_prime (used only for verification).
   Layout gmemLayoutMi = make_layout(make_shape(M, H, B), GenColMajor{});
 
-  // We separate out the warp-specialized and non-pipelined 
+  // We separate out the warp-specialized and non-pipelined
   // versions using a compiler flag.
   // Default is pipelined and not warp-specialized.
 #if !defined(EXECMODE) || EXECMODE == 0
@@ -337,7 +337,7 @@ void fmhaForwardDevice(int SEQLEN, int KEYLEN, int NUMHEADS, int BATCH,
 
   auto ctaSize = size(TiledMma0{});
 #endif
-
+  std::cout << "ctaSize: " << ctaSize << std::endl;
   //
   // Define CUDA launch kernel parameters.
   //
@@ -444,7 +444,7 @@ template <typename PrecType, int HEADDIM>
 void testFmhaForward(int m, int n, int numHeads, int batchSize, int iterations,
                      bool refCheck, bool printValues, bool printDiffs,
                      int nStreams) {
-#ifdef GEMM2FP8  
+#ifdef GEMM2FP8
   using Gemm2Type = PrecType;
 #else
   using Gemm2Type = cutlass::half_t;
@@ -610,6 +610,12 @@ void testFmhaForward(int m, int n, int numHeads, int batchSize, int iterations,
   thrust::host_vector<TestPrecType> cute_result_S = devS;
   thrust::host_vector<TestPrecType> cute_result_D = devD;
   if (refCheck) {
+    std::cout << "Q: " << std::endl;
+    cfk::verify_tensor(hostQ, hostQ, printValues, printDiffs);
+    std::cout << "K: " << std::endl;
+    cfk::verify_tensor(hostK, hostK, printValues, printDiffs);
+    std::cout << "V: " << std::endl;
+    cfk::verify_tensor(hostV, hostV, printValues, printDiffs);
     // up-cast to float always.
     thrust::device_vector<float> devQFloat(mLong * kLong * lLong);
     thrust::device_vector<float> devKFloat(nLong * kLong * lLong);
@@ -692,7 +698,7 @@ void print_usage() {
       << "Options:\n\n"
       << "  --help                      If specified, displays this usage "
          "statement.\n\n"
-      << "  --prec-type=<int>           1 for FP16, 2 (default) for FP8 E4M3.\n"         
+      << "  --prec-type=<int>           1 for FP16, 2 (default) for FP8 E4M3.\n"
       << "  --batch-size=<int>          Batch size in multi-head attention "
          "(default=4).\n"
       << "  --dim-size=<int>            Full size of the head dimension "
@@ -719,7 +725,7 @@ int main(int argc, char const **argv) {
     return;
   }
 
-  int seqLength, batchSize, dimSize, iterations, nStreams, kHeadSize, precType;  
+  int seqLength, batchSize, dimSize, iterations, nStreams, kHeadSize, precType;
 
   bool refCheck, printValues, printDiffs;
   cmd.get_cmd_line_argument("batch-size", batchSize, 4);
@@ -731,7 +737,7 @@ int main(int argc, char const **argv) {
   cmd.get_cmd_line_argument("reference-check", refCheck, false);
   cmd.get_cmd_line_argument("print-values", printValues, false);
   cmd.get_cmd_line_argument("print-diffs", printDiffs, false);
-  cmd.get_cmd_line_argument("prec-type", precType, 2);  
+  cmd.get_cmd_line_argument("prec-type", precType, 2);
 
   if (nStreams > batchSize) {
     std::cout << "#max no. of cuda streams <= batchSize" << std::endl;

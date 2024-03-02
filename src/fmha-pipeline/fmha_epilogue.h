@@ -18,9 +18,14 @@ fmhaForwardWriteOutSoftMax(const RowMax &rowMax, const RowSum &rowSum,
   auto blockIdxH = uint64_t(blockIdx.y);
   auto blockIdxB = uint64_t(blockIdx.z);
 
+  auto M = get<0>(gmemLayoutMi.shape());
   Tensor miGlobal = make_tensor(make_gmem_ptr(mi_ptr), gmemLayoutMi);
+  Tensor miGlobalCounting = make_identity_tensor(miGlobal.shape());
   Tensor miGlobalOut =
       local_tile(miGlobal, make_shape(get<0>(tileShapeO), 1, 1),
+                 make_coord(blockIdxX, blockIdxH, blockIdxB));
+  Tensor miGlobalOutCounting =
+      local_tile(miGlobalCounting, make_shape(get<0>(tileShapeO), 1, 1),
                  make_coord(blockIdxX, blockIdxH, blockIdxB));
   Tensor sPrimeGlobal = make_tensor(make_gmem_ptr(sPrimePtr), gmemLayoutMi);
   Tensor sPrimeGlobalOut =
@@ -36,10 +41,14 @@ fmhaForwardWriteOutSoftMax(const RowMax &rowMax, const RowSum &rowSum,
     auto rowId = 0;
     for (int i = rowIdGlobal; i < kQueriesPerBlock;
          i += NumMmaWarpGroups * 64) {
-      miGlobalOut(i) = rowMax(rowId);
-      sPrimeGlobalOut(i) = rowSum(rowId);
-      miGlobalOut(i + 8) = rowMax(rowId + 1);
-      sPrimeGlobalOut(i + 8) = rowSum(rowId + 1);
+      if (get<0>(miGlobalOutCounting(i)) < M) {
+        miGlobalOut(i) = rowMax(rowId);
+        sPrimeGlobalOut(i) = rowSum(rowId);
+      }
+      if (get<0>(miGlobalOutCounting(i + 8)) < M) {
+        miGlobalOut(i + 8) = rowMax(rowId + 1);
+        sPrimeGlobalOut(i + 8) = rowSum(rowId + 1);
+      }
       rowId += 2;
     }
   }

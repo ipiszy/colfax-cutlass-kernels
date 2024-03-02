@@ -18,7 +18,7 @@ fmhaForwardConsumer(Gemm1Type const *Q, Gemm1Type const *K, Gemm2Type const *V,
                     const TileShapeS &tileShapeS,
                     const GmemLayoutS &gmemLayoutS, float scale, int blockIdxY,
                     const TiledMma0 &tiledMma0, const TiledMma1 &tiledMma1,
-                    const AccumType &, const SoftType &) {
+                    const AccumType &, const SoftType &, int* thread_count) {
 
   using namespace cute;
 
@@ -27,24 +27,46 @@ fmhaForwardConsumer(Gemm1Type const *Q, Gemm1Type const *K, Gemm2Type const *V,
   // Issue GEMM-I.
   cfk::gemm(tiledMma0, tSrQ, tSrK, tSrS);
 
+// Get the block coordinates for this CTA.
+auto blockIdxX = uint64_t(blockIdx.x);
+auto blockIdxH = uint64_t(blockIdx.y);
+auto blockIdxB = uint64_t(blockIdx.z);
+auto blkCoordS = make_coord(blockIdxX, blockIdxY, blockIdxH, blockIdxB);
+
+auto threadMma0 = tiledMma0.get_thread_slice(threadIdx.x);
+Tensor mS = make_tensor(make_gmem_ptr(S), gmemLayoutS);
+Tensor gS = local_tile(mS, tileShapeS, blkCoordS);
+Tensor gSCounting = make_identity_tensor(gS.shape());
+Tensor tSgS = threadMma0.partition_C(gS);
+Tensor tSgSCounting = threadMma0.partition_C(gSCounting);
+
 // Required for verification ONLY.
 #ifdef COPYOUTMM0
-  // Get the block coordinates for this CTA.
-  auto blockIdxX = uint64_t(blockIdx.x);
-  auto blockIdxH = uint64_t(blockIdx.y);
-  auto blockIdxB = uint64_t(blockIdx.z);
-  auto threadMma0 = tiledMma0.get_thread_slice(threadIdx.x);
-  Tensor mS = make_tensor(make_gmem_ptr(S), gmemLayoutS);
-  auto blkCoordS = make_coord(blockIdxX, blockIdxY, blockIdxH, blockIdxB);
-  Tensor gS = local_tile(mS, tileShapeS, blkCoordS);
-  Tensor tSgS = threadMma0.partition_C(gS);
-  copy(tSrS, tSgS);
+  // if (cute::thread0()) {
+  //   printf("tSrS: "); print(tSrS); print("\n");
+  //   printf("tSgS: "); print(tSgS); print("\n");
+  // }
+  for (int i = 0; i < get<0,0>(tSgSCounting.shape()); ++i) {
+    for (int j = 0; j < get<0,1>(tSgSCounting.shape()); ++j) {
+      for (int k = 0; k < get<0,2>(tSgSCounting.shape()); ++k) {
+        auto sCoordinates = tSgSCounting(cute::make_tuple(i,j,k),0,0);
+        if (get<0>(sCoordinates) < get<0>(gmemLayoutS.shape()) && get<1>(sCoordinates) < get<1>(gmemLayoutS.shape())) {
+          copy(tSrS(cute::make_tuple(i,j,k),_,_), tSgS(cute::make_tuple(i,j,k),_,_));
+        }
+        // if (cute::thread0()) {
+        //   printf("tSgS_shape(%d,%d,%d):  ", i, j, k); print(tSgSCounting(cute::make_tuple(i,j,k),0,0)); print("\n");
+        // }
+      }
+    }
+  }
+  cute::cp_async_wait<0>();
+  cutlass::arch::NamedBarrier::sync(size(TiledMma0{}), 0);
 #endif
 
   if (blockIdxY == 0) { // Compute Online Softmax and NO Output Rescaling.
-    onlineSoftmaxAndRescale<true, SoftType>(rowMax, rowSum, tSrS, tOrO, scale);
+    onlineSoftmaxAndRescale<true, SoftType>(rowMax, rowSum, tSrS, tOrO, scale, tSgSCounting, gmemLayoutS.shape());
   } else { // Compute Online Softmax and Output Rescaling.
-    onlineSoftmaxAndRescale<false, SoftType>(rowMax, rowSum, tSrS, tOrO, scale);
+    onlineSoftmaxAndRescale<false, SoftType>(rowMax, rowSum, tSrS, tOrO, scale, tSgSCounting, gmemLayoutS.shape());
   }
   warpgroup_fence_operand(tSrS);
 
