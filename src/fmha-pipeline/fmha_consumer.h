@@ -18,13 +18,18 @@ fmhaForwardConsumer(Gemm1Type const *Q, Gemm1Type const *K, Gemm2Type const *V,
                     const TileShapeS &tileShapeS,
                     const GmemLayoutS &gmemLayoutS, float scale, int blockIdxY,
                     const TiledMma0 &tiledMma0, const TiledMma1 &tiledMma1,
-                    const AccumType &, const SoftType &, int* thread_count) {
+                    const AccumType &, const SoftType &, int* thread_count, int m, int k) {
 
   using namespace cute;
 
   clear(tSrS);
 
   // Issue GEMM-I.
+  if (cute::thread0()) {
+    printf("tSrQ: "); print(tSrQ); print("\n");
+    printf("tSrK: "); print(tSrK); print("\n");
+    printf("tSrS: "); print(tSrS); print("\n");
+  }
   cfk::gemm(tiledMma0, tSrQ, tSrK, tSrS);
 
 // Get the block coordinates for this CTA.
@@ -46,11 +51,19 @@ Tensor tSgSCounting = threadMma0.partition_C(gSCounting);
   //   printf("tSrS: "); print(tSrS); print("\n");
   //   printf("tSgS: "); print(tSgS); print("\n");
   // }
+  if (blockIdx.x == 1 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
+    printf("gs: "); print(gS); print("\n");
+    printf("gs counting: "); print(gSCounting); print("\n");
+    // print_tensor(gSCounting);
+  }
   for (int i = 0; i < get<0,0>(tSgSCounting.shape()); ++i) {
     for (int j = 0; j < get<0,1>(tSgSCounting.shape()); ++j) {
       for (int k = 0; k < get<0,2>(tSgSCounting.shape()); ++k) {
         auto sCoordinates = tSgSCounting(cute::make_tuple(i,j,k),0,0);
-        if (get<0>(sCoordinates) < get<0>(gmemLayoutS.shape()) && get<1>(sCoordinates) < get<1>(gmemLayoutS.shape())) {
+        if (
+            (get<0>(sCoordinates) + blockIdxX * get<0>(tileShapeS) < get<0>(gmemLayoutS.shape())) &&
+            (get<1>(sCoordinates) + blockIdxY * get<1>(tileShapeS) < get<1>(gmemLayoutS.shape()))
+        ) {
           copy(tSrS(cute::make_tuple(i,j,k),_,_), tSgS(cute::make_tuple(i,j,k),_,_));
         }
         // if (cute::thread0()) {
@@ -64,9 +77,15 @@ Tensor tSgSCounting = threadMma0.partition_C(gSCounting);
 #endif
 
   if (blockIdxY == 0) { // Compute Online Softmax and NO Output Rescaling.
-    onlineSoftmaxAndRescale<true, SoftType>(rowMax, rowSum, tSrS, tOrO, scale, tSgSCounting, gmemLayoutS.shape());
+    onlineSoftmaxAndRescale<true, SoftType>(
+      rowMax, rowSum, tSrS, tOrO, scale, tSgSCounting, gmemLayoutS.shape(),
+      blockIdxY, get<0>(tileShapeS), get<1>(tileShapeS), m, k
+    );
   } else { // Compute Online Softmax and Output Rescaling.
-    onlineSoftmaxAndRescale<false, SoftType>(rowMax, rowSum, tSrS, tOrO, scale, tSgSCounting, gmemLayoutS.shape());
+    onlineSoftmaxAndRescale<false, SoftType>(
+      rowMax, rowSum, tSrS, tOrO, scale, tSgSCounting, gmemLayoutS.shape(),
+      blockIdxY, get<0>(tileShapeS), get<1>(tileShapeS), m, k
+    );
   }
   warpgroup_fence_operand(tSrS);
 

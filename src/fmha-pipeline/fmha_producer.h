@@ -49,8 +49,7 @@ fmhaForwardProducer(Tensor<TensorEngineK, SmemLayoutK> &&sK,
 
   Tensor tKgKX = blockTmaK.partition_S(gK);
   Tensor tKgK = group_modes<1, rank(tKgKX)>(tKgKX); // (TMA,REST)
-  assert(size<1>(tKgK) == size<2>(gK));
-  assert(size<1>(tKgK) == kTiles);
+  // assert(size<1>(tKgK) == size<2>(gK));
   static_assert(size<1>(tKsK) == 1);
 
 #ifdef GEMM2FP8
@@ -63,7 +62,7 @@ fmhaForwardProducer(Tensor<TensorEngineK, SmemLayoutK> &&sK,
 
   Tensor tVgVX = blockTmaV.partition_S(gV);
   Tensor tVgV = group_modes<1, rank(tVgVX)>(tVgVX); // (TMA,REST)
-  assert(size<1>(tVgV) == size<2>(gV));
+  // assert(size<1>(tVgV) == size<2>(gV));
   assert(size<1>(tVgV) == 1);
 
   uint16_t mcast_mask_a = 0;
@@ -77,7 +76,7 @@ fmhaForwardProducer(Tensor<TensorEngineK, SmemLayoutK> &&sK,
   copy(tmaLoadK.with(*tmaBar, mcast_mask_a), tKgK(_, 0), tKsK(_, 0));
   copy(tmaLoadV.with(*tmaBar, mcast_mask_a), tVgV(_, 0), tVsV(_, 0));
 
-  // if (cute::thread0()) {
+  if (cute::thread0()) {
     // CUTE_LOG("thread info: %s\n", "KV");
     // print("=== TMA_KV ===\n");
     // print(tmaLoadQ);
@@ -92,6 +91,6 @@ fmhaForwardProducer(Tensor<TensorEngineK, SmemLayoutK> &&sK,
     // print_tensor(sK);
     // print("sV: "); print(sV); print("\n");
     // print_tensor(sV);
-  // }
+  }
 
 }

@@ -53,9 +53,12 @@ void initialize_const(Element *ptr, size_t capacity, const Element &value) {
 template <typename Element>
 bool verify_tensor(thrust::host_vector<Element> vector_Input,
                    thrust::host_vector<Element> vector_Input_Ref,
+                   int batchSize, int m, int dim,
                    bool printValues = false, bool printDiffs = false,
-                   float errCountExpected = 0, int64_t verify_length = -1) {
-
+                   float errCountExpected = 0, int64_t verify_length = -1,
+                   bool useVarSeqLength = false,
+                   thrust::host_vector<uint64_t> hostSeqOffsets = thrust::host_vector<uint64_t>()
+) {
   int64_t size = (vector_Input.size() < vector_Input_Ref.size())
                      ? vector_Input.size()
                      : vector_Input_Ref.size();
@@ -66,26 +69,41 @@ bool verify_tensor(thrust::host_vector<Element> vector_Input,
   // 10% for relative error
   float rel_tol = 1e-1f;
   int errCount = 0;
-  for (int64_t i = 0; i < size; ++i) {
-    if (printValues)
-      std::cout << vector_Input[i] << " " << vector_Input_Ref[i] << std::endl;
-    float diff = (float)(vector_Input[i] - vector_Input_Ref[i]);
-    float abs_diff = fabs(diff);
-    float abs_ref = fabs((float)vector_Input_Ref[i] + 1e-5f);
-    float relative_diff = abs_diff / abs_ref;
-    if ((isnan(vector_Input_Ref[i]) || isnan(abs_diff) || isinf(abs_diff)) ||
-        (abs_diff > abs_tol && relative_diff > rel_tol)) {
-      if (printDiffs)
-        printf("[%d/%d] diff = %f, rel_diff = %f, {computed=%f, ref=%f}.\n",
-               int(i), int(size), abs_diff, relative_diff,
-               (float)(vector_Input[i]), (float)(vector_Input_Ref[i]));
-      errCount++;
-      // return false;
+  for (int i = 0; i < batchSize; ++i) {
+    int numElements =
+        (useVarSeqLength ? (hostSeqOffsets[i + 1] - hostSeqOffsets[i]) : m) * dim;
+    uint64_t offset = (useVarSeqLength ? hostSeqOffsets[i] : (i * m)) * dim;
+    uint64_t paddedOffset = i * m * dim;
+    for (int j = 0; j < numElements; ++j) {
+      uint64_t idx = offset + j;
+      uint64_t refIdx = paddedOffset + j;
+      if (printValues)
+        std::cout << vector_Input[idx] << " " << vector_Input_Ref[refIdx] << std::endl;
+      float diff = (float)(vector_Input[idx] - vector_Input_Ref[refIdx]);
+      if (
+        (float(vector_Input[idx]) == std::numeric_limits<float>::infinity() &&
+          float(vector_Input_Ref[refIdx]) == std::numeric_limits<float>::infinity()) ||
+        (float(vector_Input[idx]) == -std::numeric_limits<float>::infinity() &&
+          float(vector_Input_Ref[refIdx]) == -std::numeric_limits<float>::infinity())
+      ) {
+        diff = 0;
+      }
+      float abs_diff = fabs(diff);
+      float abs_ref = fabs((float)vector_Input_Ref[refIdx] + 1e-5f);
+      float relative_diff = abs_diff / abs_ref;
+      if ((isnan(vector_Input_Ref[idx]) || isnan(abs_diff) || isinf(abs_diff)) ||
+          (abs_diff > abs_tol && relative_diff > rel_tol)) {
+        if (printDiffs)
+          printf("[%d/%d] diff = %f, rel_diff = %f, {computed=%f, ref=%f}.\n",
+                 int(idx), int(size), abs_diff, relative_diff,
+                 (float)(vector_Input[idx]), (float)(vector_Input_Ref[refIdx]));
+        errCount++;
+        // return false;
+      }
     }
   }
   auto errCountComputed = float(errCount) / float(size) * 100;
   printf("Error (percentage) : %f\n", errCountComputed);
-
   return errCountComputed <= errCountExpected ? true : false;
 }
 

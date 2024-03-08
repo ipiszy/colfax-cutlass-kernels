@@ -81,13 +81,17 @@ private:
   int64_t elements_O;
   int64_t elements_norm;
 
+  const thrust::host_vector<int>* sequence_lengths = nullptr;
+
 public:
   //
   // Methods
   //
 
   TestAttention(int _head_number, int _batch_size, int _head_size,
-                int _seq_length, int _alignment = 1, bool use_mask = false,
+                int _seq_length,
+                const thrust::host_vector<int>* _sequence_lengths = nullptr,
+                int _alignment = 1, bool use_mask = false,
                 bool causal = false) {
     head_number = _head_number;
     batch_size = _batch_size;
@@ -97,6 +101,8 @@ public:
 
     head_size_v = head_size;
     seq_length_kv = seq_length;
+
+    sequence_lengths = _sequence_lengths;
 
     // problems belonging to the same batch share the same seq len
     int m_real = seq_length;
@@ -236,11 +242,12 @@ public:
         cutlass::device_memory::copy_to_device(offsetS, matrix_Ref_S.data(),
                                                matrix_Ref_S.size());
 
-        int n_dim_row = problem0.n();
+        int m_dim = sequence_lengths ? (*sequence_lengths)[b] : problem0.m();
+        int n_dim_row = sequence_lengths ? (*sequence_lengths)[b] : problem0.n();
 
         // Compute softmax for reference matrix
         if (usePow2) {
-          for (int m = 0; m < problem0.m(); m++) {
+          for (int m = 0; m < m_dim; m++) {
             for (int n = 0; n < n_dim_row; n++) {
               view_Ref_host.ref().at({m, n}) =
                   kLog2e * postScaling * view_Ref_host.ref().at({m, n});
@@ -272,7 +279,7 @@ public:
             }
           }
         } else {
-          for (int64_t m = 0; m < problem0.m(); m++) {
+          for (int64_t m = 0; m < m_dim; m++) {
             ElementSoftmaxCompute max =
                 ElementSoftmaxCompute(view_Ref_host.ref().at({m, uint64_t(0)}));
             for (int64_t n = 1; n < n_dim_row; n++) {

@@ -11,14 +11,15 @@ __device__ static void //__launch_bounds__(128, 2)
 fmhaForwardWriteOutSoftMax(const RowMax &rowMax, const RowSum &rowSum,
                            SoftType *mi_ptr, SoftType *sPrimePtr,
                            GmemLayoutMI gmemLayoutMi,
-                           const TiledMma0 &tiledMma0, TileShapeO tileShapeO) {
+                           const TiledMma0 &tiledMma0,
+                           TileShapeO tileShapeO,
+                           int m) {
 
   // Get the block coordinates for this CTA.
   auto blockIdxX = uint64_t(blockIdx.x);
   auto blockIdxH = uint64_t(blockIdx.y);
   auto blockIdxB = uint64_t(blockIdx.z);
 
-  auto M = get<0>(gmemLayoutMi.shape());
   Tensor miGlobal = make_tensor(make_gmem_ptr(mi_ptr), gmemLayoutMi);
   Tensor miGlobalCounting = make_identity_tensor(miGlobal.shape());
   Tensor miGlobalOut =
@@ -41,11 +42,16 @@ fmhaForwardWriteOutSoftMax(const RowMax &rowMax, const RowSum &rowSum,
     auto rowId = 0;
     for (int i = rowIdGlobal; i < kQueriesPerBlock;
          i += NumMmaWarpGroups * 64) {
-      if (get<0>(miGlobalOutCounting(i)) < M) {
+      if (get<0>(miGlobalOutCounting(i)) < m) {
         miGlobalOut(i) = rowMax(rowId);
         sPrimeGlobalOut(i) = rowSum(rowId);
+        if (i == 0) {
+          CUTE_LOG("i = 0, rowId: %d, result: %f\n", (int)(rowId), float(rowMax(rowId)));
+          print("miGlobalOut: "); print(miGlobalOut); print("\n");
+          print("miGlobalOut[0]: "); print(miGlobalOut[0]); print("\n");
+        }
       }
-      if (get<0>(miGlobalOutCounting(i + 8)) < M) {
+      if (get<0>(miGlobalOutCounting(i + 8)) < m) {
         miGlobalOut(i + 8) = rowMax(rowId + 1);
         sPrimeGlobalOut(i + 8) = rowSum(rowId + 1);
       }
@@ -136,13 +142,8 @@ fmhaForwardWriteOutTMA(TensorO &tOrO, const RowMax &rowMax,
                        TileShapeO tileShapeO, GmemLayoutO gmemLayoutO,
                        const TiledMma1 &tiledMma1, const TensorSO &sO,
                        TiledCopyO const &tmaStoreO, bool leaderWarp,
-                       const SoftType &) {
-
-  // Get the block coordinates for this CTA.
-  auto blockIdxX = uint64_t(blockIdx.x);
-  auto blockIdxH = uint64_t(blockIdx.y);
-  auto blockIdxB = uint64_t(blockIdx.z);
-
+                       const SoftType &, uint64_t ctaM, uint64_t offset,
+                       TmaDescriptor* gTMADescriptor) {
   // Apply softmax normalization before writing out to GMEM.
   applySoftmaxNormalizer<SoftType>(rowSum, tOrO);
 
@@ -161,8 +162,8 @@ fmhaForwardWriteOutTMA(TensorO &tOrO, const RowMax &rowMax,
   cfk::copy_nosync(tOrO, tOsOAcc);
   synchronize();
 
-  Tensor mO = tmaStoreO.get_tma_tensor(shape(gmemLayoutO));
-  auto blkCoordO = make_coord(blockIdxX, 0, blockIdxH, blockIdxB);
+  Tensor mO = tmaStoreO.get_tma_tensor(getTMATensorShape(ctaM, gmemLayoutO));
+  auto blkCoordO = getTMACoord<GmemLayoutO>(offset);
   Tensor gO = local_tile(mO, tileShapeO, blkCoordO);
 
   auto cta_tmaO = tmaStoreO.get_slice(0);
@@ -178,7 +179,16 @@ fmhaForwardWriteOutTMA(TensorO &tOrO, const RowMax &rowMax,
   int lane_predicate = cute::elect_one_sync();
   // Issue the TMA store.
   if (leaderWarp and lane_predicate) {
-    cute::copy(tmaStoreO, tOsO, tOgO);
+    cute::tma_descriptor_fence_acquire(gTMADescriptor);
+    auto param_tma_desc = tmaStoreO.get_tma_descriptor();
+    CUTE_LOG("param tma pointer: %p, gTMA pointer: %p\n", param_tma_desc, gTMADescriptor);
+    // CUTE_LOG("param tma: %llu %llu\n", *((uint64_t*)(param_tma_desc)), *((uint64_t*)(param_tma_desc) + 1));
+    // CUTE_LOG("gTMA tma: %llu %llu\n", *((uint64_t*)(gTMADescriptor)), *((uint64_t*)(gTMADescriptor) + 1));
+    if (gTMADescriptor) {
+      cute::copy(tmaStoreO.with(gTMADescriptor), tOsO, tOgO);
+    } else {
+      cute::copy(tmaStoreO, tOsO, tOgO);
+    }
   }
 
   // Wait for TMA store to complete.

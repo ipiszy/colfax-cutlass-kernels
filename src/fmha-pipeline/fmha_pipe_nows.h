@@ -40,6 +40,7 @@
 
 #define KERNEL_DBG_TRACE false
 
+#include <cooperative_groups.h>
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 
@@ -62,6 +63,7 @@
 #include "fmha_producer.h"
 #include "shared_storage.h"
 
+using namespace cooperative_groups;
 using namespace cute;
 using namespace cutlass;
 
@@ -77,7 +79,8 @@ template <class Gemm1Type, class AccumType, class SoftType, class Gemm2Type,
           class SmemLayoutS, class TiledCopyV, class TileShapeV,
           class GmemLayoutV, class SmemLayoutV, class SmemLayoutVt,
           class TiledCopyO, class TileShapeO, class GmemLayoutO,
-          class SmemLayoutO, class GmemLayoutMI, class ClusterShape>
+          class SmemLayoutO, class GmemLayoutMI, class ClusterShape,
+          bool UseVarSeqLen>
 __global__ static void //__launch_bounds__(256, 1)
 fmhaForwardPipelinedNoWspl(
     Gemm1Type const *Q, CUTE_GRID_CONSTANT TiledCopyQ const tmaLoadQ,
@@ -91,7 +94,10 @@ fmhaForwardPipelinedNoWspl(
     OutputType *O, CUTE_GRID_CONSTANT TiledCopyO const tmaStoreO,
     TileShapeO tileShapeO, GmemLayoutO gmemLayoutO, SmemLayoutO smemLayoutO,
     SoftType *mi_ptr, SoftType *sPrimePtr, GmemLayoutMI gmemLayoutMi,
-    float scale) {
+    float scale, uint64_t const *seqLengthOffsets, uint8_t *gTMAWorkspace) {
+  if (cute::thread0()) {
+    CUTE_LOG("%s\n", "enter");
+  }
   extern __shared__ char shared_memory[];
 
   using MainloopPipeline = typename cutlass::PipelineTmaAsync<stageCount>;
@@ -117,9 +123,62 @@ fmhaForwardPipelinedNoWspl(
   // independent of cluster size.
   uint32_t const NumProducers = 1;
 
+  // Get the block coordinates for this CTA.
   // Get only TMA tensor mQ outside of producer loops.
-  Tensor mQ = tmaLoadQ.get_tma_tensor(shape(gmemLayoutQ));
-
+  TmaDescriptor *gTMADescriptorQ = nullptr;
+  TmaDescriptor *gTMADescriptorO = nullptr;
+  uint64_t m = 0;
+  uint64_t offset = 0;
+  uint64_t ctaM = 0;
+  uint64_t k = get<1>(gmemLayoutK.shape());
+  // CUTE_LOG("%s\n", "before usevarseqlen branch");
+  if (UseVarSeqLen) {
+    assert(seqLengthOffsets);
+    assert(rank(gmemLayoutQ) == 3);
+    auto blockIdxX = uint64_t(blockIdx.x);
+    auto blockIdxH = uint64_t(blockIdx.y);
+    auto blockIdxB = uint64_t(blockIdx.z);
+    auto h = get<2>(gmemLayoutK.shape());
+    m = seqLengthOffsets[blockIdxB + 1] - seqLengthOffsets[blockIdxB];
+    // If the block is out of bounds, return early.
+    if (blockIdxX * get<0>(tileShapeQ) >= m) {
+      return;
+    }
+    ctaM = min(m - blockIdxX * get<0>(tileShapeQ), get<0>(tileShapeQ));
+    offset = (seqLengthOffsets[blockIdxB] * h + blockIdxX * get<0>(tileShapeQ) * h + blockIdxH) * k;
+    CUTE_LOG("m=%d, offset=%d\n", (int)(m), (int)(offset));
+    nTilesOfK = ceil_div(m, get<0>(tileShapeK));
+    // Update the TMA descriptor.
+    auto blockIdx = gridDim.x * gridDim.y * blockIdxB + gridDim.x * blockIdxH + blockIdxX;
+    gTMADescriptorQ = reinterpret_cast<TmaDescriptor*>(
+      gTMAWorkspace + (blockIdx * 2) * kNumTMADescBytes);
+    gTMADescriptorO = reinterpret_cast<TmaDescriptor*>(
+      gTMAWorkspace + (blockIdx * 2 + 1) * kNumTMADescBytes);
+    // Update global TMA descriptor.
+    cfk::tensormaps_perform_update(
+      gTMADescriptorQ,
+      (void*)(Q + offset),
+      ctaM,
+      0  /* warp idx */
+    );
+    // CUTE_LOG("update O addr, O: %p, TMA: %p\n", (void*)(O + offset * h * k), gTMADescriptorO);
+    cfk::tensormaps_perform_update(
+      gTMADescriptorO,
+      (void*)(O + offset),
+      ctaM,
+      1  /* warp idx */
+    );
+    cute::tma_descriptor_fence_release();
+  } else {
+    assert(rank(gmemLayoutQ) == 4);
+    m = get<0>(gmemLayoutQ.shape());
+  }
+  // CUTE_LOG("%s\n", "after usevarseqlen branch");
+  auto tmaTensorShape = getTMATensorShape(ctaM, gmemLayoutQ);
+  auto mQ = tmaLoadQ.get_tma_tensor(tmaTensorShape);
+  // Get the block of Q for this CTA using the block coordinates
+  auto blkCoordQ = getTMACoord<GmemLayoutQ>(offset);
+  auto gQ = local_tile(mQ, tileShapeQ, blkCoordQ);
   // Compute TMA transaction bytes
   constexpr int per_cta_bytes =
       size(tileShapeK) * sizeof_bits_v<Gemm1Type> / 8 +
@@ -148,16 +207,7 @@ fmhaForwardPipelinedNoWspl(
   Tensor sVt =
       make_tensor(make_smem_ptr(shared_storage.kv.smem_v.data()), smemLayoutVt);
 
-  // Get the block coordinates for this CTA.
-  auto blockIdxX = uint64_t(blockIdx.x);
-  auto blockIdxH = uint64_t(blockIdx.y);
-  auto blockIdxB = uint64_t(blockIdx.z);
-
   // No pipelining for copying the block of Q.
-
-  // Get the block of Q for this CTA using the block coordinates
-  auto blkCoordQ = make_coord(blockIdxX, 0, blockIdxH, blockIdxB);
-  Tensor gQ = local_tile(mQ, tileShapeQ, blkCoordQ);
 
   // Partition the copying of source tiles for Q among threads.
   auto cta_tmaQ = tmaLoadQ.get_slice(0);
@@ -168,20 +218,42 @@ fmhaForwardPipelinedNoWspl(
   Tensor tQgQ = group_modes<1, rank(tQgQX)>(tQgQX); // (TMA,REST)
   auto kTiles = size<1>(tQgQ);
   assert(kTiles == 1);
-  assert(kTiles == size<2>(gQ));
+  // assert(kTiles == size<2>(gQ));
 
   // Partition the copying of dest tile for Q among threads.
   Tensor tQsQX = cta_tmaQ.partition_D(sQ);
   Tensor tQsQ = group_modes<1, rank(tQsQX)>(tQsQX);
 
+  if (cute::thread0()) {
+    CUTE_LOG("thread info: %s\n", "debug");
+    print("==== TMA_Q ====\n");
+    print(tmaLoadQ);
+    print("mQ  :  "); print(  mQ);   print("\n");
+    print("gQ  :  "); print(  gQ);   print("\n");
+    print("cta_tmaQ:  "); print(  cta_tmaQ);   print("\n");
+    print("tQgQ_x:  "); print(tQgQX); print("\n");
+    // print_tensor(tQgQX);
+    print("tQgQ:  "); print(tQgQ); print("\n");
+    // print_tensor(tQgQ);
+    print("tQgQ(_, 0):  "); print(tQgQ(_, 0)); print("\n");
+    // print_tensor(tQgQ(_, 0));
+    print("tQsQ_x:  "); print(tQsQX); print("\n");
+    print("tQsQ:  "); print(tQsQ); print("\n");
+    print("tQsQ(_, 0):  "); print(tQsQ(_, 0)); print("\n");
+    print("kTiles:  "); print(kTiles); print("\n");
+    print("sQ: "); print(sQ); print("\n");
+  }
+
   // Copy Q tile from GMEM to SMEM.
   uint64_t *tma_load_mbar = shared_storage.tma_load_mbar;
   cfk::barrierInit(tma_load_mbar[0], 1);
-  cfk::copy(tQgQ(_, 0), tQsQ(_, 0), tmaLoadQ, tma_load_mbar[0]);
+  cfk::copy(tQgQ(_, 0), tQsQ(_, 0), tmaLoadQ, tma_load_mbar[0], 0 /* mcast_mask_a */, gTMADescriptorQ);
+
   cute::wait_barrier(tma_load_mbar[0], 0); // This is REQUIRED.
 
-  // if (cute::thread0()) {
-  //   CUTE_LOG("thread info: %s\n", "debug");
+  if (cute::thread0()) {
+    CUTE_LOG("thread info: %s\n", "finish copying Q.");
+  //  print_tensor(sQ);
   //   print("==== TMA_Q ====\n");
   //   print(tmaLoadQ);
   //   print("  mQ  :  "); print(  mQ);   print("\n");
@@ -193,7 +265,7 @@ fmhaForwardPipelinedNoWspl(
   //   print("kTiles:  "); print(kTiles); print("\n");
   //   print("sQ: "); print(sQ); print("\n");
   //   print_tensor(sQ);
-  // }
+  }
 
   // Initialize matmul objects.
   TiledMma0 tiledMma0;
@@ -216,18 +288,28 @@ fmhaForwardPipelinedNoWspl(
   auto tOrPLayout = ReshapeTStoTP()(tSrS, tOrS);
   auto reg2reg = ReorgCFp8toAFp8();
 
+  if (cute::thread0()) {
+    print("tileShapeS: "); print(tileShapeS); print("\n");
+    print("tSrS: "); print(tSrS); print("\n");
+  }
+
 #ifdef QINRMEM
   Tensor tSsQ = threadMma0.partition_A(sQ);
   cfk::copy(tSsQ, tSrQ);
-  // if (cute::thread0()) {
+  if (cute::thread0()) {
+    CUTE_LOG("thread info: %s\n", "finish copying Q to registers.");
   //   print("tSrQ:  "); print(tSrQ); print("\n");
   //   print_tensor(tSrQ);
-  // }
+  }
 #endif
 
   // FMHA OUTPUT (GEMM-II) accumulator.
   Tensor tOrO = partition_fragment_C(tiledMma1, tileShapeO);
   clear(tOrO);
+
+  if (cute::thread0()) {
+    print("tOrO: "); print(tOrO); print("\n");
+  }
 
   // Allocate space for per-thread rowMax and rowSum in rmem.
   Tensor rowMax = make_tensor<SoftType>(Shape<Int<size<0>(tSrS) * size<1>(tSrS)>>{});
@@ -297,7 +379,8 @@ fmhaForwardPipelinedNoWspl(
     fmhaForwardConsumer(Q, K, V, S, tSrQ, tSrK(_, _, _, stage), tSrS,
                         tOrV(_, _, _, stage), tOrO, tOrPLayout, reg2reg, rowMax, rowSum,
                         tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
-                        tiledMma0, tiledMma1, AccumType(0), SoftType(0), &shared_storage.thread_count);
+                        tiledMma0, tiledMma1, AccumType(0), SoftType(0),
+                        &shared_storage.thread_count, m, k);
     ++smem_pipe_read;
   }
 
@@ -312,7 +395,8 @@ fmhaForwardPipelinedNoWspl(
     fmhaForwardConsumer(Q, K, V, S, tSrQ, tSrK(_, _, _, stage), tSrS,
                         tOrV(_, _, _, stage), tOrO, tOrPLayout, reg2reg, rowMax, rowSum,
                         tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
-                        tiledMma0, tiledMma1, AccumType(0), SoftType(0), &shared_storage.thread_count);
+                        tiledMma0, tiledMma1, AccumType(0), SoftType(0),
+                        &shared_storage.thread_count, m, k);
 
     pipeline.consumer_release(smem_pipe_release);
 
@@ -334,15 +418,22 @@ fmhaForwardPipelinedNoWspl(
 
   warpgroup_wait<0>();
 
+  if (cute::thread0()) {
+    CUTE_LOG("thread info: %s\n", "Before write out TMA.");
+  }
   bool leaderWarp = warp_idx == 0;
   fmhaForwardWriteOutTMA(tOrO, rowMax, rowSum, O, tileShapeO, gmemLayoutO,
-                         tiledMma1, sO, tmaStoreO, leaderWarp, SoftType(0.0));
+                         tiledMma1, sO, tmaStoreO, leaderWarp, SoftType(0.0),
+                         ctaM, offset, gTMADescriptorO);
+  if (cute::thread0()) {
+    CUTE_LOG("thread info: %s\n", "After write out TMA.");
+  }
 
 // Write out rowMax and rowSum to GMEM.
 // Required for verification ONLY.
 #ifdef COPYOUTMI
   fmhaForwardWriteOutSoftMax(rowMax, rowSum, mi_ptr, sPrimePtr, gmemLayoutMi,
-                             tiledMma0, tileShapeO);
+                             tiledMma0, tileShapeO, m);
 #endif
   // To make sure remote SMEM doesn't get destroyed
   cute::cluster_arrive();

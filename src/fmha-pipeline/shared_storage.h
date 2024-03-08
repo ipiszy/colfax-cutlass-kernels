@@ -1,5 +1,36 @@
 #pragma once
 
+// https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tensor-tensormap
+constexpr int kNumTMADescBytes = sizeof(TmaDescriptor);
+
+using VarSeqLenLayout = Layout<Shape<uint64_t, uint64_t, uint64_t>, Stride<uint64_t, uint64_t, uint64_t>>;
+using FixedSeqLenLayout = Layout<Shape<uint64_t, uint64_t, uint64_t, uint64_t>, Stride<uint64_t, uint64_t, uint64_t, uint64_t>>;
+
+template <typename LayoutType> __device__
+auto getTMATensorShape(uint64_t ctaM, LayoutType layout);
+
+template <> __device__
+auto getTMATensorShape<VarSeqLenLayout>(uint64_t ctaM, VarSeqLenLayout layout) {
+  auto shape = layout.shape();
+  return make_shape(ctaM, get<1>(shape), get<2>(shape));
+}
+
+template <> __device__
+auto getTMATensorShape<FixedSeqLenLayout>(uint64_t ctaM, FixedSeqLenLayout layout) {
+  return layout.shape();
+}
+
+template <typename LayoutType> __device__ auto getTMACoord(uint64_t offset);
+
+template <> __device__ auto getTMACoord<VarSeqLenLayout>(uint64_t offset) {
+  return make_coord(0, 0, 0);
+}
+
+template <> __device__ auto getTMACoord<FixedSeqLenLayout>(uint64_t offset) {
+  return make_coord(uint64_t(blockIdx.x), 0, uint64_t(blockIdx.y), uint64_t(blockIdx.z));
+}
+
+
 // Default kQueriesPerBlock is 64.
 #ifdef QBLKSIZE
 constexpr int kQueriesPerBlock = QBLKSIZE;
