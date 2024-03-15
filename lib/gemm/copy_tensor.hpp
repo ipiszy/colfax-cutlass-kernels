@@ -124,11 +124,11 @@ __device__ void tensormaps_perform_update(
   int warp_idx = cutlass::canonical_warp_idx_sync();
   int lane_predicate = cute::elect_one_sync();
   if (warp_idx == expectedWarpIdx && lane_predicate) {
-    CUTE_LOG("TMA: %s, tma: %p, addr: %p\n", "before update addr", gTMADescriptor, globalAddr);
+    // CUTE_LOG("TMA: %s, tma: %p, addr: %p\n", "before update addr", gTMADescriptor, globalAddr);
     cute::tma_descriptor_replace_addr_in_global_mem(gTMADescriptor, globalAddr);
-    CUTE_LOG("TMA: %s\n", "before update dim");
+    // CUTE_LOG("TMA: %s\n", "before update dim");
     tma_descriptor_replace_dim_m_in_global_mem(gTMADescriptor, m);
-    CUTE_LOG("TMA: %s\n", "after update dim");
+    // CUTE_LOG("TMA: %s\n", "after update dim");
   }
 }
 

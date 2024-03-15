@@ -73,8 +73,18 @@ CUTLASS_DEVICE static void applySoftmaxNormalizer(const Fragment0 &sPrime,
 #pragma unroll
     for (int k = 0; k < size(shape<2>(accum)) * size<2>(shape<0>(accum)); ++k) {
       data[n] = FragValType(AccumType(data[n]) * sPrime0);
+      // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+      //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+      // ) {
+      //   CUTE_LOG("calculate softmax normalizer, data[%d]: %f, sPrime0: %f\n", n, float(data[n]), float(sPrime0));
+      // }
       n++;
       data[n] = FragValType(AccumType(data[n]) * sPrime0);
+      // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+      //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+      // ) {
+      //   CUTE_LOG("calculate softmax normalizer, data[%d]: %f, sPrime0: %f\n", n, float(data[n]), float(sPrime0));
+      // }
       n++;
       data[n] = FragValType(AccumType(data[n]) * sPrime1);
       n++;
@@ -105,12 +115,12 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
   auto VT = shape<0>(accum); // number of vector elements per tile.
   auto MT = shape<1>(accum); // number of tiles along M.
   auto NT = shape<2>(accum); // number of tiles along N.
-  if (cute::thread0()) {
-    printf("VT: "); print(VT); printf("\n");
-    printf("MT: "); print(MT); printf("\n");
-    printf("NT: "); print(NT); printf("\n");
-    printf("accum_o: "), print(accum_o); printf("\n");
-  }
+  // if (cute::thread0()) {
+  //   printf("VT: "); print(VT); printf("\n");
+  //   printf("MT: "); print(MT); printf("\n");
+  //   printf("NT: "); print(NT); printf("\n");
+  //   printf("accum_o: "), print(accum_o); printf("\n");
+  // }
   MaxOp<AccumType> maxOp;
 
   auto M = get<0>(gAccumShape);
@@ -141,11 +151,11 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
         //   i, int(M), int(N), k, 0, 0, k%size<2>(VT), int(MT), int(NT), int(get<0>(coordinates)), int(get<1>(coordinates)), n, AccumType(data[n]), max0
         // );
         max0 = cutlass::fast_max(max0, AccumType(data[n]));
-        if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
-          (threadIdx.x == 0 || threadIdx.x == 1 || threadIdx.x == 2 || threadIdx.x == 3)
-        ) {
-          CUTE_LOG("calculate max, max0: %f, data[%d]: %f\n", float(max0), n, float(data[n]));
-        }
+        // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+        //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+        // ) {
+        //   CUTE_LOG("calculate max, max0: %f, data[%d]: %f\n", float(max0), n, float(data[n]));
+        // }
       }
       n++;
 
@@ -157,11 +167,11 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
         //   i, int(M), int(N), k, 1, 0, k%size<2>(VT), int(MT), int(NT), int(get<0>(coordinates)), int(get<1>(coordinates)), n, AccumType(data[n]), max0
         // );
         max0 = cutlass::fast_max(max0, AccumType(data[n]));
-        if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
-          (threadIdx.x == 0 || threadIdx.x == 1 || threadIdx.x == 2 || threadIdx.x == 3)
-        ) {
-          CUTE_LOG("calculate max, max0: %f, data[%d]: %f\n", float(max0), n, float(data[n]));
-        }
+        // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+        //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+        // ) {
+        //   CUTE_LOG("calculate max, max0: %f, data[%d]: %f\n", float(max0), n, float(data[n]));
+        // }
       }
       n++;
 
@@ -182,11 +192,11 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
     auto max_quad_0 = ShflReduce<4>::run(max0, maxOp);
     auto max_quad_1 = ShflReduce<4>::run(max1, maxOp);
     // CUTE_LOG("i=%d, MT=%d, NT=%d, max_quad_0: %f, max_quad_1: %f\n", i, int(MT), int(NT), max_quad_0, max_quad_1);
-    if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
-      (threadIdx.x == 0 || threadIdx.x == 1 || threadIdx.x == 2 || threadIdx.x == 3)
-    ) {
-      CUTE_LOG("calculate max reduction, max0: %f\n", float(max_quad_0));
-    }
+    // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+    //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+    // ) {
+    //   CUTE_LOG("calculate max reduction, max0: %f\n", float(max_quad_0));
+    // }
     mi(rowId) = max_quad_0;
     mi(rowId + 1) = max_quad_1;
 
@@ -198,11 +208,11 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
       if (mIdx + blockIdx.x * tileM < currentM) {
         m_prime_exp0 = exp2f(miPrev(rowId) - max_quad_0);
         sPrime(rowId) *= m_prime_exp0;
-        if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
-          (threadIdx.x == 0 || threadIdx.x == 1 || threadIdx.x == 2 || threadIdx.x == 3)
-        ) {
-          CUTE_LOG("updated sPrime, m_prime_exp0: %f, result: %f\n", m_prime_exp0, sPrime(rowId));
-        }
+        // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+        //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+        // ) {
+        //   CUTE_LOG("updated sPrime, m_prime_exp0: %f, result: %f\n", m_prime_exp0, sPrime(rowId));
+        // }
       }
 
       if (mIdx + 8 + blockIdx.x * tileM < currentM) {
@@ -212,25 +222,46 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
 
       for (int k = 0; k < size(shape<2>(accum_o)) * size<2>(shape<0>(accum_o));
            ++k) {
-        if (mIdx + blockIdx.x * tileM < currentM && nIdx + k * 8 + blockIdxY * tileN < currentK) {
+        if ((mIdx + blockIdx.x * tileM < currentM) && (nIdx + k * 8 < currentK)) {
           data_o[no] = FragValTypeO(AccumType(data_o[no]) * m_prime_exp0);
-          no++;
+          // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+          //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+          // ) {
+          //   CUTE_LOG("updated data_o, m_prime_exp0: %f, result: %f\n", m_prime_exp0, float(data_o[no]));
+          // }
+        // } else {
+        //   if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+        //     (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+        //   ) {
+        //     CUTE_LOG(
+        //       "skip updating data_o, mIdx: %d, currentM: %d, nIdx: %d, k: %d, currentK: %d\n",
+        //       mIdx, currentM, nIdx, k, currentK
+        //     );
+        //     CUTE_LOG("mIdx + blockIdx.x * tileM: %d", mIdx + blockIdx.x * tileM);
+        //     CUTE_LOG("nIdx + k * 8: %d", nIdx + k * 8);
+        //   }
         }
+        no++;
 
-        if (mIdx + blockIdx.x * tileM < currentM && nIdx + 1 + k * 8 + blockIdxY * tileN < currentK) {
+        if ((mIdx + blockIdx.x * tileM < currentM) && (nIdx + 1 + k * 8 < currentK)) {
           data_o[no] = FragValTypeO(AccumType(data_o[no]) * m_prime_exp0);
-          no++;
+          // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+          //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+          // ) {
+          //   CUTE_LOG("updated data_o, m_prime_exp0: %f, result: %f\n", m_prime_exp0, float(data_o[no]));
+          // }
         }
+        no++;
 
-        if (mIdx + 8 + blockIdx.x * tileM < currentM && nIdx + k * 8 + blockIdxY * tileN < currentK) {
+        if ((mIdx + 8 + blockIdx.x * tileM < currentM) && (nIdx + k * 8 < currentK)) {
           data_o[no] = FragValTypeO(AccumType(data_o[no]) * m_prime_exp1);
-          no++;
         }
+        no++;
 
-        if (mIdx + 8 + blockIdx.x * tileM < currentM && nIdx + 1 + k * 8 + blockIdxY * tileN < currentK) {
+        if ((mIdx + 8 + blockIdx.x * tileM < currentM) && (nIdx + 1 + k * 8 < currentK)) {
           data_o[no] = FragValTypeO(AccumType(data_o[no]) * m_prime_exp1);
-          no++;
         }
+        no++;
       }
     }
     rowId += 2;
@@ -251,11 +282,11 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
       auto coordinates = countingTensor(cute::make_tuple(0, 0, k % size<2>(VT)), MT, NT);
       if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < currentM) {
         auto val0 = AccumType(data[n]);
-        if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
-          (threadIdx.x == 0 || threadIdx.x == 1 || threadIdx.x == 2 || threadIdx.x == 3)
-        ) {
-          CUTE_LOG("calculate sum, n: %d, val: %f, miRow0: %f\n", int(n), float(val0), float(miRow0));
-        }
+        // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+        //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+        // ) {
+        //   CUTE_LOG("calculate sum, n: %d, val: %f, miRow0: %f\n", int(n), float(val0), float(miRow0));
+        // }
         val0 = exp2f(val0 - miRow0);
         sum0 += val0;
         data[n] = val0;
@@ -265,11 +296,11 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
       coordinates = countingTensor(cute::make_tuple(1, 0, k % size<2>(VT)), MT, NT);
       if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < currentM) {
         auto val1 = AccumType(data[n]);
-        if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
-          (threadIdx.x == 0 || threadIdx.x == 1 || threadIdx.x == 2 || threadIdx.x == 3)
-        ) {
-          CUTE_LOG("calculate sum, n: %d, val: %f, miRow0: %f\n", int(n), float(val1), float(miRow0));
-        }
+        // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+        //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+        // ) {
+        //   CUTE_LOG("calculate sum, n: %d, val: %f, miRow0: %f\n", int(n), float(val1), float(miRow0));
+        // }
         val1 = exp2f(val1 - miRow0);
         sum0 += val1;
         data[n] = val1;
@@ -298,11 +329,11 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
     auto sumQuad1 = ShflReduce<4>::run(sum1, sumOp);
     sPrime(rowId) += sumQuad0;
     sPrime(rowId + 1) += sumQuad1;
-    if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
-      (threadIdx.x == 0 || threadIdx.x == 1 || threadIdx.x == 2 || threadIdx.x == 3)
-    ) {
-      CUTE_LOG("updated sPrime, sumQuad0: %f, result: %f\n", sumQuad0, sPrime(rowId));
-    }
+    // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
+    //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
+    // ) {
+    //   CUTE_LOG("updated sPrime, sumQuad0: %f, result: %f\n", sumQuad0, sPrime(rowId));
+    // }
     rowId += 2;
   }
 }

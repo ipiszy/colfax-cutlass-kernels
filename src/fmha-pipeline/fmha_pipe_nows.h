@@ -95,9 +95,9 @@ fmhaForwardPipelinedNoWspl(
     TileShapeO tileShapeO, GmemLayoutO gmemLayoutO, SmemLayoutO smemLayoutO,
     SoftType *mi_ptr, SoftType *sPrimePtr, GmemLayoutMI gmemLayoutMi,
     float scale, uint64_t const *seqLengthOffsets, uint8_t *gTMAWorkspace) {
-  if (cute::thread0()) {
-    CUTE_LOG("%s\n", "enter");
-  }
+  // if (cute::thread0()) {
+  //   CUTE_LOG("%s\n", "enter");
+  // }
   extern __shared__ char shared_memory[];
 
   using MainloopPipeline = typename cutlass::PipelineTmaAsync<stageCount>;
@@ -146,7 +146,7 @@ fmhaForwardPipelinedNoWspl(
     }
     ctaM = min(m - blockIdxX * get<0>(tileShapeQ), get<0>(tileShapeQ));
     offset = (seqLengthOffsets[blockIdxB] * h + blockIdxX * get<0>(tileShapeQ) * h + blockIdxH) * k;
-    CUTE_LOG("m=%d, offset=%d\n", (int)(m), (int)(offset));
+    // CUTE_LOG("m=%d, offset=%d\n", (int)(m), (int)(offset));
     nTilesOfK = ceil_div(m, get<0>(tileShapeK));
     // Update the TMA descriptor.
     auto blockIdx = gridDim.x * gridDim.y * blockIdxB + gridDim.x * blockIdxH + blockIdxX;
@@ -224,25 +224,25 @@ fmhaForwardPipelinedNoWspl(
   Tensor tQsQX = cta_tmaQ.partition_D(sQ);
   Tensor tQsQ = group_modes<1, rank(tQsQX)>(tQsQX);
 
-  if (cute::thread0()) {
-    CUTE_LOG("thread info: %s\n", "debug");
-    print("==== TMA_Q ====\n");
-    print(tmaLoadQ);
-    print("mQ  :  "); print(  mQ);   print("\n");
-    print("gQ  :  "); print(  gQ);   print("\n");
-    print("cta_tmaQ:  "); print(  cta_tmaQ);   print("\n");
-    print("tQgQ_x:  "); print(tQgQX); print("\n");
-    // print_tensor(tQgQX);
-    print("tQgQ:  "); print(tQgQ); print("\n");
-    // print_tensor(tQgQ);
-    print("tQgQ(_, 0):  "); print(tQgQ(_, 0)); print("\n");
-    // print_tensor(tQgQ(_, 0));
-    print("tQsQ_x:  "); print(tQsQX); print("\n");
-    print("tQsQ:  "); print(tQsQ); print("\n");
-    print("tQsQ(_, 0):  "); print(tQsQ(_, 0)); print("\n");
-    print("kTiles:  "); print(kTiles); print("\n");
-    print("sQ: "); print(sQ); print("\n");
-  }
+  // if (cute::thread0()) {
+  //   CUTE_LOG("thread info: %s\n", "debug");
+  //   print("==== TMA_Q ====\n");
+  //   print(tmaLoadQ);
+  //   print("mQ  :  "); print(  mQ);   print("\n");
+  //   print("gQ  :  "); print(  gQ);   print("\n");
+  //   print("cta_tmaQ:  "); print(  cta_tmaQ);   print("\n");
+  //   print("tQgQ_x:  "); print(tQgQX); print("\n");
+  //   print_tensor(tQgQX);
+  //   print("tQgQ:  "); print(tQgQ); print("\n");
+  //   print_tensor(tQgQ);
+  //   print("tQgQ(_, 0):  "); print(tQgQ(_, 0)); print("\n");
+  //   print_tensor(tQgQ(_, 0));
+  //   print("tQsQ_x:  "); print(tQsQX); print("\n");
+  //   print("tQsQ:  "); print(tQsQ); print("\n");
+  //   print("tQsQ(_, 0):  "); print(tQsQ(_, 0)); print("\n");
+  //   print("kTiles:  "); print(kTiles); print("\n");
+  //   print("sQ: "); print(sQ); print("\n");
+  // }
 
   // Copy Q tile from GMEM to SMEM.
   uint64_t *tma_load_mbar = shared_storage.tma_load_mbar;
@@ -251,9 +251,9 @@ fmhaForwardPipelinedNoWspl(
 
   cute::wait_barrier(tma_load_mbar[0], 0); // This is REQUIRED.
 
-  if (cute::thread0()) {
-    CUTE_LOG("thread info: %s\n", "finish copying Q.");
-  //  print_tensor(sQ);
+  // if (cute::thread0()) {
+  //   CUTE_LOG("thread info: %s\n", "finish copying Q.");
+  //   print_tensor(sQ);
   //   print("==== TMA_Q ====\n");
   //   print(tmaLoadQ);
   //   print("  mQ  :  "); print(  mQ);   print("\n");
@@ -265,7 +265,7 @@ fmhaForwardPipelinedNoWspl(
   //   print("kTiles:  "); print(kTiles); print("\n");
   //   print("sQ: "); print(sQ); print("\n");
   //   print_tensor(sQ);
-  }
+  // }
 
   // Initialize matmul objects.
   TiledMma0 tiledMma0;
@@ -288,28 +288,28 @@ fmhaForwardPipelinedNoWspl(
   auto tOrPLayout = ReshapeTStoTP()(tSrS, tOrS);
   auto reg2reg = ReorgCFp8toAFp8();
 
-  if (cute::thread0()) {
-    print("tileShapeS: "); print(tileShapeS); print("\n");
-    print("tSrS: "); print(tSrS); print("\n");
-  }
+  // if (cute::thread0()) {
+  //   print("tileShapeS: "); print(tileShapeS); print("\n");
+  //   print("tSrS: "); print(tSrS); print("\n");
+  // }
 
 #ifdef QINRMEM
   Tensor tSsQ = threadMma0.partition_A(sQ);
   cfk::copy(tSsQ, tSrQ);
-  if (cute::thread0()) {
-    CUTE_LOG("thread info: %s\n", "finish copying Q to registers.");
+  // if (cute::thread0()) {
+  //   CUTE_LOG("thread info: %s\n", "finish copying Q to registers.");
   //   print("tSrQ:  "); print(tSrQ); print("\n");
   //   print_tensor(tSrQ);
-  }
+  // }
 #endif
 
   // FMHA OUTPUT (GEMM-II) accumulator.
   Tensor tOrO = partition_fragment_C(tiledMma1, tileShapeO);
   clear(tOrO);
 
-  if (cute::thread0()) {
-    print("tOrO: "); print(tOrO); print("\n");
-  }
+  // if (cute::thread0()) {
+  //   print("tOrO: "); print(tOrO); print("\n");
+  // }
 
   // Allocate space for per-thread rowMax and rowSum in rmem.
   Tensor rowMax = make_tensor<SoftType>(Shape<Int<size<0>(tSrS) * size<1>(tSrS)>>{});
@@ -418,16 +418,16 @@ fmhaForwardPipelinedNoWspl(
 
   warpgroup_wait<0>();
 
-  if (cute::thread0()) {
-    CUTE_LOG("thread info: %s\n", "Before write out TMA.");
-  }
+  // if (cute::thread0()) {
+  //   CUTE_LOG("thread info: %s\n", "Before write out TMA.");
+  // }
   bool leaderWarp = warp_idx == 0;
   fmhaForwardWriteOutTMA(tOrO, rowMax, rowSum, O, tileShapeO, gmemLayoutO,
                          tiledMma1, sO, tmaStoreO, leaderWarp, SoftType(0.0),
                          ctaM, offset, gTMADescriptorO);
-  if (cute::thread0()) {
-    CUTE_LOG("thread info: %s\n", "After write out TMA.");
-  }
+  // if (cute::thread0()) {
+  //   CUTE_LOG("thread info: %s\n", "After write out TMA.");
+  // }
 
 // Write out rowMax and rowSum to GMEM.
 // Required for verification ONLY.

@@ -403,11 +403,11 @@ void fmhaForwardDevice(int SEQLEN, int KEYLEN, int NUMHEADS, int BATCH,
         (void*)(gTMAWorkspace.get() + i * 2 * kNumTMADescBytes),
         (void*)(tmaQ.get_tma_descriptor()),
         kNumTMADescBytes, cudaMemcpyHostToDevice);
-      printf(
-        "Q cudaMemcpyAsync, dest: %p, src: %p\n",
-        (void*)(gTMAWorkspace.get() + i * 2 * kNumTMADescBytes),
-        (void*)(tmaQ.get_tma_descriptor())
-      );
+      // printf(
+      //   "Q cudaMemcpyAsync, dest: %p, src: %p\n",
+      //   (void*)(gTMAWorkspace.get() + i * 2 * kNumTMADescBytes),
+      //   (void*)(tmaQ.get_tma_descriptor())
+      // );
       // cudaMemcpyAsync(
       //   (void*)(gTMAWorkspace.get() + (i * 2 + 1) * kNumTMADescBytes),
       //   (void*)(tmaO.get_tma_descriptor()),
@@ -416,11 +416,11 @@ void fmhaForwardDevice(int SEQLEN, int KEYLEN, int NUMHEADS, int BATCH,
         (void*)(gTMAWorkspace.get() + (i * 2 + 1) * kNumTMADescBytes),
         (void*)(tmaO.get_tma_descriptor()),
         kNumTMADescBytes, cudaMemcpyHostToDevice);
-      printf(
-        "O cudaMemcpyAsync, dest: %p, src: %p\n",
-        (void*)(gTMAWorkspace.get() + (i * 2 + 1) * kNumTMADescBytes),
-        (void*)(tmaO.get_tma_descriptor())
-      );
+      // printf(
+      //   "O cudaMemcpyAsync, dest: %p, src: %p\n",
+      //   (void*)(gTMAWorkspace.get() + (i * 2 + 1) * kNumTMADescBytes),
+      //   (void*)(tmaO.get_tma_descriptor())
+      // );
     }
   }
 
@@ -671,11 +671,11 @@ void testFmhaForward(int m, int n, int numHeads, int batchSize, int iterations,
   // Run few times (warmup).
   devS = hostS;
   devD = hostD;
-  // fmhaForwardDeviceLoop<PrecType, Gemm2Type, SoftType, OutputType, HEADDIM, UseVarSeqLen>(
-  //     m, n, numHeads, batchSize, devQ.data().get(), devK.data().get(),
-  //     devVt.data().get(), devS.data().get(), devD.data().get(),
-  //     devMiOut.data().get(), devSprimeOut.data().get(), 10, nStreams, scale,
-  //     B_M, (UseVarSeqLen ? devSeqOffsets.data().get() : nullptr));
+  fmhaForwardDeviceLoop<PrecType, Gemm2Type, SoftType, OutputType, HEADDIM, UseVarSeqLen>(
+      m, n, numHeads, batchSize, devQ.data().get(), devK.data().get(),
+      devVt.data().get(), devS.data().get(), devD.data().get(),
+      devMiOut.data().get(), devSprimeOut.data().get(), 10, nStreams, scale,
+      B_M, (UseVarSeqLen ? devSeqOffsets.data().get() : nullptr));
   CUTE_CHECK_LAST();
 
   // Timing iterations

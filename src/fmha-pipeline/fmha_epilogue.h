@@ -45,11 +45,11 @@ fmhaForwardWriteOutSoftMax(const RowMax &rowMax, const RowSum &rowSum,
       if (get<0>(miGlobalOutCounting(i)) < m) {
         miGlobalOut(i) = rowMax(rowId);
         sPrimeGlobalOut(i) = rowSum(rowId);
-        if (i == 0) {
-          CUTE_LOG("i = 0, rowId: %d, result: %f\n", (int)(rowId), float(rowMax(rowId)));
-          print("miGlobalOut: "); print(miGlobalOut); print("\n");
-          print("miGlobalOut[0]: "); print(miGlobalOut[0]); print("\n");
-        }
+        // if (i == 0) {
+        //   CUTE_LOG("i = 0, rowId: %d, result: %f\n", (int)(rowId), float(rowMax(rowId)));
+        //   print("miGlobalOut: "); print(miGlobalOut); print("\n");
+        //   print("miGlobalOut[0]: "); print(miGlobalOut[0]); print("\n");
+        // }
       }
       if (get<0>(miGlobalOutCounting(i + 8)) < m) {
         miGlobalOut(i + 8) = rowMax(rowId + 1);
@@ -181,7 +181,7 @@ fmhaForwardWriteOutTMA(TensorO &tOrO, const RowMax &rowMax,
   if (leaderWarp and lane_predicate) {
     cute::tma_descriptor_fence_acquire(gTMADescriptor);
     auto param_tma_desc = tmaStoreO.get_tma_descriptor();
-    CUTE_LOG("param tma pointer: %p, gTMA pointer: %p\n", param_tma_desc, gTMADescriptor);
+    // CUTE_LOG("param tma pointer: %p, gTMA pointer: %p\n", param_tma_desc, gTMADescriptor);
     // CUTE_LOG("param tma: %llu %llu\n", *((uint64_t*)(param_tma_desc)), *((uint64_t*)(param_tma_desc) + 1));
     // CUTE_LOG("gTMA tma: %llu %llu\n", *((uint64_t*)(gTMADescriptor)), *((uint64_t*)(gTMADescriptor) + 1));
     if (gTMADescriptor) {
