@@ -18,7 +18,7 @@ fmhaForwardConsumer(Gemm1Type const *Q, Gemm1Type const *K, Gemm2Type const *V,
                     const TileShapeS &tileShapeS,
                     const GmemLayoutS &gmemLayoutS, float scale, int blockIdxY,
                     const TiledMma0 &tiledMma0, const TiledMma1 &tiledMma1,
-                    const AccumType &, const SoftType &, int* thread_count, int m, int k) {
+                    const AccumType &, const SoftType &, int m, int k) {
 
   using namespace cute;
 
@@ -32,21 +32,17 @@ fmhaForwardConsumer(Gemm1Type const *Q, Gemm1Type const *K, Gemm2Type const *V,
   // }
   cfk::gemm(tiledMma0, tSrQ, tSrK, tSrS);
 
-// Get the block coordinates for this CTA.
-auto blockIdxX = uint64_t(blockIdx.x);
-auto blockIdxH = uint64_t(blockIdx.y);
-auto blockIdxB = uint64_t(blockIdx.z);
-auto blkCoordS = make_coord(blockIdxX, blockIdxY, blockIdxH, blockIdxB);
-
-auto threadMma0 = tiledMma0.get_thread_slice(threadIdx.x);
-Tensor mS = make_tensor(make_gmem_ptr(S), gmemLayoutS);
-Tensor gS = local_tile(mS, tileShapeS, blkCoordS);
-Tensor gSCounting = make_identity_tensor(gS.shape());
-Tensor tSgS = threadMma0.partition_C(gS);
-Tensor tSgSCounting = threadMma0.partition_C(gSCounting);
-
 // Required for verification ONLY.
 #ifdef COPYOUTMM0
+  // Get the block coordinates for this CTA.
+  auto blockIdxX = uint64_t(blockIdx.x);
+  auto blockIdxH = uint64_t(blockIdx.y);
+  auto blockIdxB = uint64_t(blockIdx.z);
+  auto blkCoordS = make_coord(blockIdxX, blockIdxY, blockIdxH, blockIdxB);
+  auto threadMma0 = tiledMma0.get_thread_slice(threadIdx.x);
+  Tensor mS = make_tensor(make_gmem_ptr(S), gmemLayoutS);
+  Tensor gS = local_tile(mS, tileShapeS, blkCoordS);
+  Tensor tSgS = threadMma0.partition_C(gS);
   // if (cute::thread0()) {
   //   printf("tSrS: "); print(tSrS); print("\n");
   //   printf("tSgS: "); print(tSgS); print("\n");
@@ -56,19 +52,35 @@ Tensor tSgSCounting = threadMma0.partition_C(gSCounting);
   //   printf("gs counting: "); print(gSCounting); print("\n");
   //   // print_tensor(gSCounting);
   // }
-  for (int i = 0; i < get<0,0>(tSgSCounting.shape()); ++i) {
-    for (int j = 0; j < get<0,1>(tSgSCounting.shape()); ++j) {
-      for (int k = 0; k < get<0,2>(tSgSCounting.shape()); ++k) {
-        auto sCoordinates = tSgSCounting(cute::make_tuple(i,j,k),0,0);
-        if (
-            (get<0>(sCoordinates) + blockIdxX * get<0>(tileShapeS) < get<0>(gmemLayoutS.shape())) &&
-            (get<1>(sCoordinates) + blockIdxY * get<1>(tileShapeS) < get<1>(gmemLayoutS.shape()))
-        ) {
-          copy(tSrS(cute::make_tuple(i,j,k),_,_), tSgS(cute::make_tuple(i,j,k),_,_));
+  auto VT = shape<0>(tSgS); // number of vector elements per tile.
+  auto MT = shape<1>(tSgS); // number of tiles along M.
+  auto NT = shape<2>(tSgS); // number of tiles along N.
+  static_assert(get<0>(VT) == 2);
+  static_assert(get<1>(VT) == 2);
+
+  auto mIdx = (threadIdx.x / 32) * 16 + (threadIdx.x % 32) / 4;
+  auto nIdx = (threadIdx.x % 4) * 2;
+
+  for (int k = 0; k < NT * size<2>(VT); ++k) {
+    bool row0InBound = isIdxInBound(mIdx, blockIdx.x, get<0>(tileShapeS), m);
+    bool row1InBound = isIdxInBound(mIdx + 8, blockIdx.x, get<0>(tileShapeS), m);
+    bool col0InBound = isIdxInBound(nIdx + k * 8, blockIdxY, get<1>(tileShapeS), m);
+    bool col1InBound = isIdxInBound(nIdx + 1 + k * 8, blockIdxY, get<1>(tileShapeS), m);
+
+    if (row0InBound) {
+      if (col0InBound) {
+        copy(tSrS(cute::make_tuple(0,0,k),_,_), tSgS(cute::make_tuple(0,0,k),_,_));
+        if (col1InBound) {
+          copy(tSrS(cute::make_tuple(1,0,k),_,_), tSgS(cute::make_tuple(1,0,k),_,_));
         }
-        // if (cute::thread0()) {
-        //   printf("tSgS_shape(%d,%d,%d):  ", i, j, k); print(tSgSCounting(cute::make_tuple(i,j,k),0,0)); print("\n");
-        // }
+      }
+    }
+    if (row1InBound) {
+      if (col0InBound) {
+        copy(tSrS(cute::make_tuple(0,1,k),_,_), tSgS(cute::make_tuple(0,1,k),_,_));
+        if (col1InBound) {
+          copy(tSrS(cute::make_tuple(1,1,k),_,_), tSgS(cute::make_tuple(1,1,k),_,_));
+        }
       }
     }
   }
@@ -78,12 +90,12 @@ Tensor tSgSCounting = threadMma0.partition_C(gSCounting);
 
   if (blockIdxY == 0) { // Compute Online Softmax and NO Output Rescaling.
     onlineSoftmaxAndRescale<true, SoftType>(
-      rowMax, rowSum, tSrS, tOrO, scale, tSgSCounting, gmemLayoutS.shape(),
+      rowMax, rowSum, tSrS, tOrO, scale,
       blockIdxY, get<0>(tileShapeS), get<1>(tileShapeS), m, k
     );
   } else { // Compute Online Softmax and Output Rescaling.
     onlineSoftmaxAndRescale<false, SoftType>(
-      rowMax, rowSum, tSrS, tOrO, scale, tSgSCounting, gmemLayoutS.shape(),
+      rowMax, rowSum, tSrS, tOrO, scale,
       blockIdxY, get<0>(tileShapeS), get<1>(tileShapeS), m, k
     );
   }

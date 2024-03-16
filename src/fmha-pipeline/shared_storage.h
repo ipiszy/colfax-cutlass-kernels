@@ -98,7 +98,6 @@ struct SharedStorage {
   struct {
     cute::uint64_t tma_load_mbar[8]; // 8 TMA barrier pre-allcoated for usage.
     typename cutlass::PipelineTmaAsync<stageCount>::SharedStorage storage;
-    int thread_count = 0;
   };
 };
 #else

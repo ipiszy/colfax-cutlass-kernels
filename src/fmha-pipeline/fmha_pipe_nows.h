@@ -379,8 +379,7 @@ fmhaForwardPipelinedNoWspl(
     fmhaForwardConsumer(Q, K, V, S, tSrQ, tSrK(_, _, _, stage), tSrS,
                         tOrV(_, _, _, stage), tOrO, tOrPLayout, reg2reg, rowMax, rowSum,
                         tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
-                        tiledMma0, tiledMma1, AccumType(0), SoftType(0),
-                        &shared_storage.thread_count, m, k);
+                        tiledMma0, tiledMma1, AccumType(0), SoftType(0), m, k);
     ++smem_pipe_read;
   }
 
@@ -395,8 +394,7 @@ fmhaForwardPipelinedNoWspl(
     fmhaForwardConsumer(Q, K, V, S, tSrQ, tSrK(_, _, _, stage), tSrS,
                         tOrV(_, _, _, stage), tOrO, tOrPLayout, reg2reg, rowMax, rowSum,
                         tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
-                        tiledMma0, tiledMma1, AccumType(0), SoftType(0),
-                        &shared_storage.thread_count, m, k);
+                        tiledMma0, tiledMma1, AccumType(0), SoftType(0), m, k);
 
     pipeline.consumer_release(smem_pipe_release);
 

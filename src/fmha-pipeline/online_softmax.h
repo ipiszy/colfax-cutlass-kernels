@@ -57,6 +57,11 @@ template <> struct ShflReduce<2> {
   }
 };
 
+__device__
+inline bool isIdxInBound(int idx, int blockIdx, int tileSize, int total) {
+  return idx + blockIdx * tileSize < total;
+}
+
 template <typename AccumType, typename Fragment0, typename Fragment1>
 CUTLASS_DEVICE static void applySoftmaxNormalizer(const Fragment0 &sPrime,
                                                   Fragment1 &accum) {
@@ -96,12 +101,10 @@ CUTLASS_DEVICE static void applySoftmaxNormalizer(const Fragment0 &sPrime,
 }
 
 template <bool isFirst, typename AccumType, typename Fragment0,
-          typename Fragment1, typename Fragment2, typename Fragment3,
-          typename CountingTensor, typename GAccumShape>
+          typename Fragment1, typename Fragment2, typename Fragment3>
 CUTLASS_DEVICE static void
 onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
                         Fragment3 &accum_o, float scaleFactor,
-                        const CountingTensor& countingTensor, const GAccumShape& gAccumShape,
                         int blockIdxY, int tileM, int tileN, int currentM, int currentK) {
   using namespace cute;
   using FragValType = typename Fragment2::value_type;
@@ -115,6 +118,8 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
   auto VT = shape<0>(accum); // number of vector elements per tile.
   auto MT = shape<1>(accum); // number of tiles along M.
   auto NT = shape<2>(accum); // number of tiles along N.
+  static_assert(get<0>(VT) == 2);
+  static_assert(get<1>(VT) == 2);
   // if (cute::thread0()) {
   //   printf("VT: "); print(VT); printf("\n");
   //   printf("MT: "); print(MT); printf("\n");
@@ -123,9 +128,6 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
   // }
   MaxOp<AccumType> maxOp;
 
-  auto M = get<0>(gAccumShape);
-  auto N = get<1>(gAccumShape);
-
   auto data = accum.data();
   auto data_o = accum_o.data();
   int n = 0;
@@ -133,6 +135,8 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
   Tensor miPrev = make_fragment_like(mi);
   cute::copy(mi, miPrev);
 
+  auto mIdx = (threadIdx.x / 32) * 16 + (threadIdx.x % 32) / 4;
+  auto nIdx = (threadIdx.x % 4) * 2;
   int rowId = 0;
 #pragma unroll
   for (int i = 0; i < MT; ++i) {
@@ -143,8 +147,7 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
 
 #pragma unroll
     for (int k = 0; k < NT * size<2>(VT); ++k) {
-      auto coordinates = countingTensor(cute::make_tuple(0, 0, k % size<2>(VT)), MT, NT);
-      if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < M) {
+      if (isIdxInBound(mIdx, blockIdx.x, tileM, currentM) && (isIdxInBound(nIdx + k * 8, blockIdxY, tileN, currentM))) {
         data[n] = FragValType(AccumType(data[n]) * scaleFactor);
         // CUTE_LOG(
         //   "i=%d, M=%d, N=%d, k=%d, shape:((%d, %d, %d), %d, %d), x: %d, y: %d, n: %d, data[n]: %f, max0: %f\n",
@@ -159,8 +162,7 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
       }
       n++;
 
-      coordinates = countingTensor(cute::make_tuple(1, 0, k % size<2>(VT)), MT, NT);
-      if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < currentM) {
+      if (isIdxInBound(mIdx, blockIdx.x, tileM, currentM) && (isIdxInBound(nIdx + 1 + k * 8, blockIdxY, tileN, currentM))) {
         data[n] = FragValType(AccumType(data[n]) * scaleFactor);
         // CUTE_LOG(
         //   "i=%d, M=%d, N=%d, k=%d, shape:((%d, %d, %d), %d, %d), x: %d, y: %d, n: %d, data[n]: %f, max0: %f\n",
@@ -175,15 +177,13 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
       }
       n++;
 
-      coordinates = countingTensor(cute::make_tuple(0, 1, k % size<2>(VT)), MT, NT);
-      if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < currentM) {
+      if (isIdxInBound(mIdx + 8, blockIdx.x, tileM, currentM) && (isIdxInBound(nIdx + k * 8, blockIdxY, tileN, currentM))) {
         data[n] = FragValType(AccumType(data[n]) * scaleFactor);
         max1 = cutlass::fast_max(max1, AccumType(data[n]));
       }
       n++;
 
-      coordinates = countingTensor(cute::make_tuple(1, 1, k % size<2>(VT)), MT, NT);
-      if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < currentM) {
+      if (isIdxInBound(mIdx + 8, blockIdx.x, tileM, currentM) && (isIdxInBound(nIdx + 1 + k * 8, blockIdxY, tileN, currentM))) {
         data[n] = FragValType(AccumType(data[n]) * scaleFactor);
         max1 = cutlass::fast_max(max1, AccumType(data[n]));
       }
@@ -203,9 +203,7 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
     if (!isFirst) {
       float m_prime_exp0 = 0;
       float m_prime_exp1 = 0;
-      auto mIdx = (threadIdx.x / 32) * 16 + (threadIdx.x % 32) / 4;
-      auto nIdx = (threadIdx.x % 4) * 2;
-      if (mIdx + blockIdx.x * tileM < currentM) {
+      if (isIdxInBound(mIdx, blockIdx.x, tileM, currentM)) {
         m_prime_exp0 = exp2f(miPrev(rowId) - max_quad_0);
         sPrime(rowId) *= m_prime_exp0;
         // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
@@ -215,14 +213,14 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
         // }
       }
 
-      if (mIdx + 8 + blockIdx.x * tileM < currentM) {
+      if (isIdxInBound(mIdx + 8, blockIdx.x, tileM, currentM)) {
         m_prime_exp1 = exp2f(miPrev(rowId + 1) - max_quad_1);
         sPrime(rowId + 1) *= m_prime_exp1;
       }
 
       for (int k = 0; k < size(shape<2>(accum_o)) * size<2>(shape<0>(accum_o));
            ++k) {
-        if ((mIdx + blockIdx.x * tileM < currentM) && (nIdx + k * 8 < currentK)) {
+        if (isIdxInBound(mIdx, blockIdx.x, tileM, currentM) && isIdxInBound(nIdx + k * 8, 0, 0, currentK)) {
           data_o[no] = FragValTypeO(AccumType(data_o[no]) * m_prime_exp0);
           // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
           //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
@@ -243,7 +241,7 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
         }
         no++;
 
-        if ((mIdx + blockIdx.x * tileM < currentM) && (nIdx + 1 + k * 8 < currentK)) {
+        if (isIdxInBound(mIdx, blockIdx.x, tileM, currentM) && isIdxInBound(nIdx + 1 + k * 8, 0, 0, currentK)) {
           data_o[no] = FragValTypeO(AccumType(data_o[no]) * m_prime_exp0);
           // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
           //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
@@ -253,12 +251,12 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
         }
         no++;
 
-        if ((mIdx + 8 + blockIdx.x * tileM < currentM) && (nIdx + k * 8 < currentK)) {
+        if (isIdxInBound(mIdx + 8, blockIdx.x, tileM, currentM) && isIdxInBound(nIdx + k * 8, 0, 0, currentK)) {
           data_o[no] = FragValTypeO(AccumType(data_o[no]) * m_prime_exp1);
         }
         no++;
 
-        if ((mIdx + 8 + blockIdx.x * tileM < currentM) && (nIdx + 1 + k * 8 < currentK)) {
+        if (isIdxInBound(mIdx + 8, blockIdx.x, tileM, currentM) && isIdxInBound(nIdx + 1 + k * 8, 0, 0, currentK)) {
           data_o[no] = FragValTypeO(AccumType(data_o[no]) * m_prime_exp1);
         }
         no++;
@@ -278,9 +276,7 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
     auto miRow1 = mi(rowId + 1);
 #pragma unroll
     for (int k = 0; k < NT * size<2>(VT); ++k) {
-
-      auto coordinates = countingTensor(cute::make_tuple(0, 0, k % size<2>(VT)), MT, NT);
-      if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < currentM) {
+      if (isIdxInBound(mIdx, blockIdx.x, tileM, currentM) && (isIdxInBound(nIdx + k * 8, blockIdxY, tileN, currentM))) {
         auto val0 = AccumType(data[n]);
         // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
         //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
@@ -293,8 +289,7 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
       }
       n++;
 
-      coordinates = countingTensor(cute::make_tuple(1, 0, k % size<2>(VT)), MT, NT);
-      if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < currentM) {
+      if (isIdxInBound(mIdx, blockIdx.x, tileM, currentM) && (isIdxInBound(nIdx + 1 + k * 8, blockIdxY, tileN, currentM))) {
         auto val1 = AccumType(data[n]);
         // if (blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.y == 0 && threadIdx.z == 0 && rowId == 0 &&
         //   (threadIdx.x == 8 || threadIdx.x == 9 || threadIdx.x == 10 || threadIdx.x == 11)
@@ -307,8 +302,7 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
       }
       n++;
 
-      coordinates = countingTensor(cute::make_tuple(0, 1, k % size<2>(VT)), MT, NT);
-      if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < currentM) {
+      if (isIdxInBound(mIdx + 8, blockIdx.x, tileM, currentM) && (isIdxInBound(nIdx + k * 8, blockIdxY, tileN, currentM))) {
         auto val2 = AccumType(data[n]);
         val2 = exp2f(val2 - miRow1);
         sum1 += val2;
@@ -316,8 +310,7 @@ onlineSoftmaxAndRescale(Fragment0 &mi, Fragment1 &sPrime, Fragment2 &accum,
       }
       n++;
 
-      coordinates = countingTensor(cute::make_tuple(1, 1, k % size<2>(VT)), MT, NT);
-      if (get<0>(coordinates) + blockIdx.x * tileM < currentM && get<1>(coordinates) + blockIdxY * tileN < currentM) {
+      if (isIdxInBound(mIdx + 8, blockIdx.x, tileM, currentM) && (isIdxInBound(nIdx + 1 + k * 8, blockIdxY, tileN, currentM))) {
         auto val3 = AccumType(data[n]);
         val3 = exp2f(val3 - miRow1);
         sum1 += val3;
