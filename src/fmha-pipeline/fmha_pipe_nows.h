@@ -376,10 +376,18 @@ fmhaForwardPipelinedNoWspl(
     warpgroup_arrive();
     int stage = smem_pipe_read.index();
 
-    fmhaForwardConsumer(Q, K, V, S, tSrQ, tSrK(_, _, _, stage), tSrS,
-                        tOrV(_, _, _, stage), tOrO, tOrPLayout, reg2reg, rowMax, rowSum,
-                        tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
-                        tiledMma0, tiledMma1, AccumType(0), SoftType(0), m, k);
+    auto tSrKStage = tSrK(_, _, _, stage);
+    auto tOrVStage = tOrV(_, _, _, stage);
+    fmhaForwardConsumer<
+      Gemm1Type, AccumType, SoftType, Gemm2Type, TiledMma0, TiledMma1,
+      TileShapeS, GmemLayoutS, decltype(tSrQ), decltype(tSrKStage), decltype(tSrS),
+      decltype(tOrVStage), decltype(tOrO), decltype(tOrPLayout),
+      decltype(reg2reg), decltype(rowMax), decltype(rowSum), UseVarSeqLen
+    >(
+      Q, K, V, S, tSrQ, tSrKStage, tSrS, tOrVStage, tOrO, tOrPLayout,
+      reg2reg, rowMax, rowSum, tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
+      tiledMma0, tiledMma1, AccumType(0), SoftType(0), m, k
+    );
     ++smem_pipe_read;
   }
 
@@ -391,11 +399,18 @@ fmhaForwardPipelinedNoWspl(
     warpgroup_arrive();
     int stage = smem_pipe_read.index();
 
-    fmhaForwardConsumer(Q, K, V, S, tSrQ, tSrK(_, _, _, stage), tSrS,
-                        tOrV(_, _, _, stage), tOrO, tOrPLayout, reg2reg, rowMax, rowSum,
-                        tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
-                        tiledMma0, tiledMma1, AccumType(0), SoftType(0), m, k);
-
+    auto tSrKStage = tSrK(_, _, _, stage);
+    auto tOrVStage = tOrV(_, _, _, stage);
+    fmhaForwardConsumer<
+      Gemm1Type, AccumType, SoftType, Gemm2Type, TiledMma0, TiledMma1,
+      TileShapeS, GmemLayoutS, decltype(tSrQ), decltype(tSrKStage), decltype(tSrS),
+      decltype(tOrVStage), decltype(tOrO), decltype(tOrPLayout),
+      decltype(reg2reg), decltype(rowMax), decltype(rowSum), UseVarSeqLen
+    >(
+      Q, K, V, S, tSrQ, tSrKStage, tSrS, tOrVStage, tOrO, tOrPLayout,
+      reg2reg, rowMax, rowSum, tileShapeS, gmemLayoutS, scale, blockIdxYCons++,
+      tiledMma0, tiledMma1, AccumType(0), SoftType(0), m, k
+    );
     pipeline.consumer_release(smem_pipe_release);
 
     if (lane_predicate && (warp_idx == 0) && (tma_k_iterations > 0)) {

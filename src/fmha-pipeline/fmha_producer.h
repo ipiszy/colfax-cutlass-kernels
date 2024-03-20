@@ -75,22 +75,4 @@ fmhaForwardProducer(Tensor<TensorEngineK, SmemLayoutK> &&sK,
   // Uses TMA multicast for CLUSTERN>1
   copy(tmaLoadK.with(*tmaBar, mcast_mask_a), tKgK(_, 0), tKsK(_, 0));
   copy(tmaLoadV.with(*tmaBar, mcast_mask_a), tVgV(_, 0), tVsV(_, 0));
-
-  // if (cute::thread0()) {
-    // CUTE_LOG("thread info: %s\n", "KV");
-    // print("=== TMA_KV ===\n");
-    // print(tmaLoadQ);
-    // print("  mQ  :  "); print(  mQ);   print("\n");
-    // print("  gQ  :  "); print(  gQ);   print("\n");
-    // print("tQgQ_x:  "); print(tQgQX); print("\n");
-    // print("tQgQ:  "); print(tQgQ); print("\n");
-    // print("tQsQ_x:  "); print(tQsQX); print("\n");
-    // print("tQsQ:  "); print(tQsQ); print("\n");
-    // print("kTiles:  "); print(kTiles); print("\n");
-    // print("sK: "); print(sK); print("\n");
-    // print_tensor(sK);
-    // print("sV: "); print(sV); print("\n");
-    // print_tensor(sV);
-  // }
-
 }

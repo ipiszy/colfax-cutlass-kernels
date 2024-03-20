@@ -44,11 +44,6 @@ fmhaForwardWriteOutSoftMax(const RowMax &rowMax, const RowSum &rowSum,
       if (isIdxInBound(mIdx, blockIdx.x, get<0>(tileShapeO), m)) {
         miGlobalOut(i) = rowMax(rowId);
         sPrimeGlobalOut(i) = rowSum(rowId);
-        // if (i == 0) {
-        //   CUTE_LOG("i = 0, rowId: %d, result: %f\n", (int)(rowId), float(rowMax(rowId)));
-        //   print("miGlobalOut: "); print(miGlobalOut); print("\n");
-        //   print("miGlobalOut[0]: "); print(miGlobalOut[0]); print("\n");
-        // }
       }
       if (isIdxInBound(mIdx + 8, blockIdx.x, get<0>(tileShapeO), m)) {
         miGlobalOut(i + 8) = rowMax(rowId + 1);

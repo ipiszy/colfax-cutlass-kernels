@@ -395,32 +395,14 @@ void fmhaForwardDevice(int SEQLEN, int KEYLEN, int NUMHEADS, int BATCH,
     auto tmaBytes = numSMs * kNumTMADescBytes * 2;
     gTMAWorkspace.reset(tmaBytes);
     for (int i = 0; i < numSMs; ++i) {
-      // cudaMemcpyAsync(
-      //   (void*)(gTMAWorkspace.get() + i * 2 * kNumTMADescBytes),
-      //   (void*)(tmaQ.get_tma_descriptor()),
-      //   kNumTMADescBytes, cudaMemcpyHostToDevice, stream);
-      cudaMemcpy(
+      cudaMemcpyAsync(
         (void*)(gTMAWorkspace.get() + i * 2 * kNumTMADescBytes),
         (void*)(tmaQ.get_tma_descriptor()),
-        kNumTMADescBytes, cudaMemcpyHostToDevice);
-      // printf(
-      //   "Q cudaMemcpyAsync, dest: %p, src: %p\n",
-      //   (void*)(gTMAWorkspace.get() + i * 2 * kNumTMADescBytes),
-      //   (void*)(tmaQ.get_tma_descriptor())
-      // );
-      // cudaMemcpyAsync(
-      //   (void*)(gTMAWorkspace.get() + (i * 2 + 1) * kNumTMADescBytes),
-      //   (void*)(tmaO.get_tma_descriptor()),
-      //   kNumTMADescBytes, cudaMemcpyHostToDevice, stream);
-      cudaMemcpy(
+        kNumTMADescBytes, cudaMemcpyHostToDevice, stream);
+      cudaMemcpyAsync(
         (void*)(gTMAWorkspace.get() + (i * 2 + 1) * kNumTMADescBytes),
         (void*)(tmaO.get_tma_descriptor()),
-        kNumTMADescBytes, cudaMemcpyHostToDevice);
-      // printf(
-      //   "O cudaMemcpyAsync, dest: %p, src: %p\n",
-      //   (void*)(gTMAWorkspace.get() + (i * 2 + 1) * kNumTMADescBytes),
-      //   (void*)(tmaO.get_tma_descriptor())
-      // );
+        kNumTMADescBytes, cudaMemcpyHostToDevice, stream);
     }
   }
 
@@ -665,8 +647,15 @@ void testFmhaForward(int m, int n, int numHeads, int batchSize, int iterations,
   const int timing_iterations = iterations;
   GPU_Clock timer;
 
-  double fmha_flops =
-      double(4 * (UseVarSeqLen ? 1 : batchSize) * numHeads * mLong * nLong * kLong) / double(1.0e9);
+  double fmha_flops = 0;
+  if (UseVarSeqLen) {
+    for (int i = 0; i < batchSize; ++i) {
+      uint64_t seqLength = uint64_t(hostSeqLengths[i]);
+      fmha_flops += double(4 * numHeads * seqLength * seqLength * kLong) / double(1.0e9);
+    }
+  } else {
+    fmha_flops = double(4 * batchSize * numHeads * mLong * nLong * kLong) / double(1.0e9);
+  }
 
   // Run few times (warmup).
   devS = hostS;
@@ -690,8 +679,8 @@ void testFmhaForward(int m, int n, int numHeads, int batchSize, int iterations,
   double cute_time = timer.seconds() / (float)timing_iterations;
   CUTE_CHECK_LAST();
   printf("CUTE_FMHA:     [%6.1f]Gflop/s  "
-         "(%6.4f)ms\n",
-         fmha_flops / cute_time, cute_time * 1000);
+         "(%6.4f)ms, total FLOPS: [%6.1f]Gflops\n",
+         fmha_flops / cute_time, cute_time * 1000, fmha_flops);
 
   thrust::host_vector<SoftType> miHostOut = devMiOut;
   thrust::host_vector<SoftType> sPrimeHostOut = devSprimeOut;
