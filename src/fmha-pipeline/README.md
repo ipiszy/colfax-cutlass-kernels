@@ -1,3 +1,26 @@
+# New Features
+This fork has variable sequence length support. Only the pipelined non warp specialization version is updated (i.e. fmha_pipe_nows.h).
+
+# Commandline
+fp16, without variable sequence length:
+`./fmha_forward_fp16_pipeline_no_ws  --seq-length=8448 --head-size=128 --dim-size=2048 --iterations=1000 --use-var-seq-length=false --batch-size=4`
+
+fp8, with variable sequence length:
+`./fmha_forward_fp8_pipeline_no_ws  --seq-length=8448 --head-size=128 --dim-size=2048 --iterations=1000 --use-var-seq-length=true --batch-size=4`
+
+# Performance (3/19)
+|     |Baseline|New, without var-seq-length|New, with var-seq-length|
+|-----|-----|-----|-----|
+|D=64, FP8|[437661.6]Gflop/s  (5.3434)ms, total FLOPS: [2338.6]Gflops|[441952.8]Gflop/s  (5.2915)ms, total FLOPS: [2338.6]Gflops|[333882.6]Gflop/s  (2.4435)ms, total FLOPS: [815.9]Gflops|
+|D=128, FP8|[751336.2]Gflop/s  (3.1126)ms, total FLOPS: [2338.6]Gflops|[737517.7]Gflop/s  (3.1709)ms, total FLOPS: [2338.6]Gflops|[551985.6]Gflop/s  (1.4780)ms, total FLOPS: [815.9]Gflops|
+|D=256, FP8|[1013330.9]Gflop/s  (2.3078)ms, total FLOPS: [2338.6]Gflops|[1006940.2]Gflop/s  (2.3225)ms, total FLOPS: [2338.6]Gflops, Register spill|[786070.3]Gflop/s  (1.0379)ms, total FLOPS: [815.9]Gflops, Register spill|
+|D=64, FP16|[447783.3]Gflop/s  (5.2226)ms, total FLOPS: [2338.6]Gflops|[434603.1]Gflop/s  (5.3810)ms, total FLOPS: [2338.6]Gflops|[334516.8]Gflop/s  (2.4389)ms, total FLOPS: [815.9]Gflops|
+|D=128, FP16|[639263.2]Gflop/s  (3.6583)ms, total FLOPS: [2338.6]Gflops|[627457.2]Gflop/s  (3.7271)ms, total FLOPS: [2338.6]Gflops|[521439.5]Gflop/s  (1.5646)ms, total FLOPS: [ 815.9]Gflops|
+|D=256, FP16|Shared Memory Allocation Failed|Shared Memory Allocation Failed, Register spill|Shared Memory Allocation Failed, Register spill|
+
+* Note: Baseline is the version before variable sequence length updates. The variable sequence length feature support results in a tiny perf regression even when variable sequence
+length is not used.
+
 # FMHA Pipeline
 
 Implementation of FMHA with software pipelining and optional warp specialization. Uses the CUTLASS Pipeline API. Both FP16 and FP8 precision formats for input tensors are supported.
@@ -5,7 +28,7 @@ Implementation of FMHA with software pipelining and optional warp specialization
 ## Building and Running with the scripts
 
 1. Download CUTLASS 3.4 following instructions from: https://github.com/NVIDIA/cutlass.
-2. Change the hardcoded paths in the 'compile_H64.sh' and 'compile_H128.sh' scripts to your CUTLASS directory, and run the scripts. We have preselected macros that we've found are optimal for FP8 precision with head dimension 64 and 128, respectively.
+2. Change the hardcoded paths in the 'compile_H128.sh' scripts to your CUTLASS directory, and run the scripts. We have preselected macros that we've found are optimal for FP8 precision with head dimension 64 and 128, respectively.
 3. For more customizability, run the 'compile.sh' script. This accepts 7 arguments (as "-D$1 -D$2 -D$3 -D$4 -D$5 -D$6 -D$7").  If no flag is desired, simply input "NONE" as the argument.
 
 ## User-defined macros
@@ -25,7 +48,7 @@ For #ifdef flags:
 4. GEMM1FP16ACC enables FP16 accumulator for GEMM-I. Not recommended due to severely degraded accuracy of computation (we want float accumulator for softmax).
 5. GEMM2FP16ACC enables FP16 accumulator for GEMM-II.
 
-We also have the debugging flags COPYOUTMM0 and COPYOUTMI for validating intermediate steps of the computation. 
+We also have the debugging flags COPYOUTMM0 and COPYOUTMI for validating intermediate steps of the computation.
 
 ## Using the compile and run all script
 
