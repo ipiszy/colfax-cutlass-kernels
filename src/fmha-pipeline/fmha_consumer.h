@@ -26,8 +26,6 @@ fmhaForwardConsumer(Gemm1Type const *Q, Gemm1Type const *K, Gemm2Type const *V,
   // Issue GEMM-I.
   cfk::gemm(tiledMma0, tSrQ, tSrK, tSrS);
 
-  // Required for verification ONLY.
-#ifdef COPYOUTMM0
   // Get the block coordinates for this CTA.
   auto blockIdxX = uint64_t(blockIdx.x);
   auto blockIdxH = uint64_t(blockIdx.y);
@@ -37,39 +35,25 @@ fmhaForwardConsumer(Gemm1Type const *Q, Gemm1Type const *K, Gemm2Type const *V,
   Tensor mS = make_tensor(make_gmem_ptr(S), gmemLayoutS);
   Tensor gS = local_tile(mS, tileShapeS, blkCoordS);
   Tensor tSgS = threadMma0.partition_C(gS);
+  Tensor gSCounting = make_identity_tensor(gS.shape());
+  Tensor tSgSCounting = threadMma0.partition_C(gSCounting);
+  Tensor tSpS = make_tensor<bool>(get<0>(tSgSCounting.shape()));
+  static_assert(rank(tSgSCounting) == 3);
+  static_assert(get<1>(tSgSCounting.shape()) == 1);
+  static_assert(get<2>(tSgSCounting.shape()) == 1);
 
+#ifdef COPYOUTMM0
   auto VT = shape<0>(tSgS); // number of vector elements per tile.
   auto MT = shape<1>(tSgS); // number of tiles along M.
   auto NT = shape<2>(tSgS); // number of tiles along N.
   static_assert(get<0>(VT) == 2);
   static_assert(get<1>(VT) == 2);
 
-  auto mIdx = (threadIdx.x / 32) * 16 + (threadIdx.x % 32) / 4;
-  auto nIdx = (threadIdx.x % 4) * 2;
-  bool row0InBound = isIdxInBound(mIdx, blockIdx.x, get<0>(tileShapeS), m);
-  bool row1InBound = isIdxInBound(mIdx + 8, blockIdx.x, get<0>(tileShapeS), m);
-
-  for (int k = 0; k < NT * size<2>(VT); ++k) {
-    bool col0InBound = isIdxInBound(nIdx + k * 8, blockIdxY, get<1>(tileShapeS), m);
-    bool col1InBound = isIdxInBound(nIdx + 1 + k * 8, blockIdxY, get<1>(tileShapeS), m);
-
-    if (row0InBound) {
-      if (col0InBound) {
-        copy(tSrS(cute::make_tuple(0,0,k),_,_), tSgS(cute::make_tuple(0,0,k),_,_));
-        if (col1InBound) {
-          copy(tSrS(cute::make_tuple(1,0,k),_,_), tSgS(cute::make_tuple(1,0,k),_,_));
-        }
-      }
-    }
-    if (row1InBound) {
-      if (col0InBound) {
-        copy(tSrS(cute::make_tuple(0,1,k),_,_), tSgS(cute::make_tuple(0,1,k),_,_));
-        if (col1InBound) {
-          copy(tSrS(cute::make_tuple(1,1,k),_,_), tSgS(cute::make_tuple(1,1,k),_,_));
-        }
-      }
-    }
-  }
+  fillSPredicate(
+    tSgSCounting, tSpS, get<0>(tileShapeS),
+    get<1>(tileShapeS), blockIdx.x, blockIdxY, m
+  );
+  copy_if(tSpS, tSrS, tSgS);
   cute::cp_async_wait<0>();
   cutlass::arch::NamedBarrier::sync(size(TiledMma0{}), 0);
 #endif
@@ -88,16 +72,22 @@ fmhaForwardConsumer(Gemm1Type const *Q, Gemm1Type const *K, Gemm2Type const *V,
       );
     }
   } else {
+#ifndef COPYOUTMM0
+    fillSPredicate(
+      tSgSCounting, tSpS, get<0>(tileShapeS),
+      get<1>(tileShapeS), blockIdx.x, blockIdxY, m
+    );
+#endif
     // Slow path. Need to check if all elements in a warp are in bound.
     if (blockIdxY == 0) { // Compute Online Softmax and NO Output Rescaling.
       onlineSoftmaxAndRescale<true, SoftType>(
         rowMax, rowSum, tSrS, tOrO, scale,
-        blockIdxY, get<0>(tileShapeS), get<1>(tileShapeS), m, k
+        blockIdxY, get<0>(tileShapeS), get<1>(tileShapeS), m, k, tSpS
       );
     } else { // Compute Online Softmax and Output Rescaling.
       onlineSoftmaxAndRescale<false, SoftType>(
         rowMax, rowSum, tSrS, tOrO, scale,
-        blockIdxY, get<0>(tileShapeS), get<1>(tileShapeS), m, k
+        blockIdxY, get<0>(tileShapeS), get<1>(tileShapeS), m, k, tSpS
       );
     }
   }
