@@ -73,8 +73,11 @@ template <typename SCountingTensor, typename SPTensor>
 __device__ inline void fillSPredicate(
     const SCountingTensor& tensorS, SPTensor& tensorP,
     int tileX, int tileY, int blockIdxX, int blockIdxY, int N) {
+#pragma unroll
   for (int i = 0; i < get<0,0>(tensorS.shape()); ++i) {
+#pragma unroll
     for (int j = 0; j < get<0,1>(tensorS.shape()); ++j) {
+#pragma unroll
       for (int k = 0; k < get<0,2>(tensorS.shape()); ++k) {
         auto sCoordinates = tensorS(cute::make_tuple(i,j,k),0,0);
         tensorP(i, j, k) = (
