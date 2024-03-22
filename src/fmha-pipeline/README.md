@@ -8,18 +8,26 @@ fp16, without variable sequence length:
 fp8, with variable sequence length:
 `./fmha_forward_fp8_pipeline_no_ws  --seq-length=8448 --head-size=128 --dim-size=2048 --iterations=1000 --use-var-seq-length=true --batch-size=4`
 
-# Performance (3/19)
-|     |Baseline|New, without var-seq-length|New, with var-seq-length|
-|-----|-----|-----|-----|
-|D=64, FP8|[437661.6]Gflop/s  (5.3434)ms, total FLOPS: [2338.6]Gflops|[441952.8]Gflop/s  (5.2915)ms, total FLOPS: [2338.6]Gflops|[333882.6]Gflop/s  (2.4435)ms, total FLOPS: [815.9]Gflops|
-|D=128, FP8|[751336.2]Gflop/s  (3.1126)ms, total FLOPS: [2338.6]Gflops|[737517.7]Gflop/s  (3.1709)ms, total FLOPS: [2338.6]Gflops|[551985.6]Gflop/s  (1.4780)ms, total FLOPS: [815.9]Gflops|
-|D=256, FP8|[1013330.9]Gflop/s  (2.3078)ms, total FLOPS: [2338.6]Gflops|[1006940.2]Gflop/s  (2.3225)ms, total FLOPS: [2338.6]Gflops, Register spill|[786070.3]Gflop/s  (1.0379)ms, total FLOPS: [815.9]Gflops, Register spill|
-|D=64, FP16|[447783.3]Gflop/s  (5.2226)ms, total FLOPS: [2338.6]Gflops|[434603.1]Gflop/s  (5.3810)ms, total FLOPS: [2338.6]Gflops|[334516.8]Gflop/s  (2.4389)ms, total FLOPS: [815.9]Gflops|
-|D=128, FP16|[639263.2]Gflop/s  (3.6583)ms, total FLOPS: [2338.6]Gflops|[627457.2]Gflop/s  (3.7271)ms, total FLOPS: [2338.6]Gflops|[521439.5]Gflop/s  (1.5646)ms, total FLOPS: [ 815.9]Gflops|
-|D=256, FP16|Shared Memory Allocation Failed|Shared Memory Allocation Failed, Register spill|Shared Memory Allocation Failed, Register spill|
+# Performance (3/22)
+|     |Without predicate, with var-seq-length|With predicate, with var-seq-length|
+|-----|-----|-----|
+|D=64, FP8|[333882.6]Gflop/s  (2.4435)ms, total FLOPS: [815.9]Gflops|[337322.3]Gflop/s  (2.4186)ms, total FLOPS: [ 815.9]Gflops|
+|D=128, FP8|[551985.6]Gflop/s  (1.4780)ms, total FLOPS: [815.9]Gflops|[580066.0]Gflop/s  (1.4065)ms, total FLOPS: [ 815.9]Gflops, register spill|
+|D=256, FP8|[786070.3]Gflop/s  (1.0379)ms, total FLOPS: [815.9]Gflops, Register spill|[782375.0]Gflop/s  (1.0428)ms, total FLOPS: [ 815.9]Gflops, register spill|
+|D=64, FP16|[334516.8]Gflop/s  (2.4389)ms, total FLOPS: [815.9]Gflops|[345680.6]Gflop/s  (2.3601)ms, total FLOPS: [815.9]Gflops|
+|D=128, FP16|[521439.5]Gflop/s  (1.5646)ms, total FLOPS: [ 815.9]Gflops|[526375.6]Gflop/s  (1.5499)ms, total FLOPS: [ 815.9]Gflops|
+|D=256, FP16|Shared Memory Allocation Failed, Register spill|Shared Memory Allocation Failed, Register spill|
 
-* Note: Baseline is the version before variable sequence length updates. The variable sequence length feature support results in a tiny perf regression even when variable sequence
-length is not used.
+# Register usage (3/22)
+|     |Without predicate|With predicate|
+|-----|-----|-----|
+|FP8, D=256|255 (spill), with / without var seq length|255 (spill), with / without var seq length|
+|FP8, D=128|210, without var seq length; 226, with var seq length|210, without var seq length; 255 (spill), with var seq length|
+|FP8, D=64|145, without var seq length; 226, with var seq length|145, without var seq length; 229, with var seq length|
+
+* Note: it compares the version without predicate (i.e. based on runtime index calculations) with the version with predicate.
+* SAAS code with predicate: https://gist.githubusercontent.com/ipiszy/7bcd41cdc1179c4172c0e8875c7e61c0/raw/14a082494baa443619d0dd4d925b96282a9cfa45/saas_with_predicate
+* SAAS code without predicate: https://gist.githubusercontent.com/ipiszy/fea4fd73377ccda5e2b86ea7bf6e7a2b/raw/4599ab7fa8f9f8f23401d819d5146f9085bd6209/saas_with_predicate
 
 # FMHA Pipeline
 
